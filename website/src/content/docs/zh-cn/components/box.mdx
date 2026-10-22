@@ -1,0 +1,25 @@
+---
+title: Box
+description: 带外观的普通容器。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="box" alt="五个盒子：纯色填充、带边框的圆角卡片、阴影、半透明的强调色盒子、色块上的亚克力。" />
+
+`Box` 是一个容器：把子元素排成一列，并在它们后面画一块底板。每种元素都接受这里展示的视觉属性。
+
+| 属性 | 取值 |
+|---|---|
+| `bg` | 颜色（`#RRGGBB`、`#AARRGGBB`）或颜色令牌 |
+| `radius` | dip，或 `radius-control` 这样的令牌 |
+| `border` | 宽度和颜色：`border: 1 stroke-surface` |
+| `shadow` | 阴影令牌：`shadow-card`、`shadow-flyout`、`shadow-dialog` |
+| `opacity` | 0 到 1 |
+| `clip` | `true` 把子元素裁剪到盒子（及其圆角）内 |
+| `material` | `acrylic`（模糊背景）或 `acrylic-flat` |
+| `layer` | `true` 让元素拥有自己的纹理 |
+
+在 Rust 里，一个元素是 `ui.tree.add(parent, Layout, Visual, Content)`，最后一块就是这样做出来的。
+
+<Recipe name="box" />

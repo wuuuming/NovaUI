@@ -1,0 +1,23 @@
+---
+title: 简介
+description: NovaUI 是一个保留模式、按损坏区域绘制的 Rust UI 框架。
+---
+import Shot from '../../../components/Shot.astro';
+
+NovaUI 是一个 Rust 桌面应用的 UI 框架。它的原则是：**每一帧的工作量只和变化的东西成正比**；窗口空闲时不花任何代价——没有轮次、没有帧、没有唤醒。
+
+<Shot name="hello" alt="一个自绘标题栏的窗口：标题、一行文字和一个强调色按钮。" />
+
+- **保留模式。** 应用只建一次元素树，之后改树上的属性。每个 setter 都知道自己让什么失效（布局、绘制，或只是位置）；一帧只重录、只呈现被损坏的区域。
+- **外观用声明，逻辑用 Rust。** 结构、布局和样式写在 `.nui` 样式表里；状态和行为留在 Rust 里。绑定（`$title`）和表达式（`window.w / 2`）把两边连起来。
+- **时间有主人。** 定时器、ticker、任务和订阅都是句柄；丢掉句柄就取消。没有匿名调度，也就不会有东西无意中让窗口一直醒着。
+- **三个后端，一份着色器。** Windows 上的 D3D11，Windows 和 Linux 上的 Vulkan，以及一个软件渲染器——每条 GPU 路径都要和它逐像素比对。本站的每张截图都由这个渲染器从页面自己的示例画出。
+- **宿主：** Win32、Wayland、X11，窗口都无系统边框，由应用自己绘制。
+
+NovaUI 是为音乐播放器 NovaPlayer 写的，并被它使用；框架本身对音乐一无所知。
+
+## 接下来
+
+- [安装](/zh-cn/installation/) 和 [入门](/zh-cn/getting-started/)：一个带 `.nui` 样式表和按钮的窗口。
+- [概念](/zh-cn/concepts/elements-and-layout/)：元素树、文字、语言、事件和帧如何工作。
+- 元素和部件，每个一页，从 [Box](/zh-cn/components/box/) 到 [QR](/zh-cn/components/qr/)。

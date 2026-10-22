@@ -1,0 +1,21 @@
+// The window's whole look: a title bar the app draws itself, a heading, a line of text bound to
+// `$count`, and a button that sends the action `add` when clicked.
+style Text { type: body; }
+
+Column #root { width: 100%; height: 100%; bg: solid-base;
+  Row #bar { height: 32; padding: 0, 0, 0, 12; gap: 8;
+    Icon MusicNote2 { icon-size: 16; fg: text-secondary; }
+    Text "Hello" { type: caption; fg: text-secondary; grow: 1; }
+    Button #close { width: 46; height: 32; bg-hover: caption-close-hover; on-click: close;
+      Icon CaptionClose { icon-size: 10; } }
+  }
+  Column { padding: 12, 24, 24, 24; gap: 12;
+    Text "Hello, NovaUI" { type: title; }
+    Text #count { text: $count; fg: text-secondary; }
+    Button #add { align-self: start; height: 32; padding: 0, 16; gap: 8; radius: radius-control;
+        bg: accent; bg-hover: #E660CDFF; bg-press: #CC60CDFF; on-click: add;
+      Icon Add { icon-size: 16; fg: black; }
+      Text "Click me" { fg: black; }
+    }
+  }
+}

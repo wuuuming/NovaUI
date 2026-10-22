@@ -1,0 +1,13 @@
+---
+title: QR
+description: A QR code as an image.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="qr" alt="A QR code for a sign-in link beside its text." />
+
+`widgets::qr::image(text)` makes a QR code as an `ImageHandle`; an `Image` element shows it.
+Give it a light margin (here a white box with padding) so phones can read it.
+
+<Recipe name="qr" />

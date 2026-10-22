@@ -1,0 +1,16 @@
+// Edit: a single-line text field (the TextEdit widget). `hint` shows while it is empty;
+// `on-edit` names the action its changes, Enter and Esc carry; `select-on-focus` selects the
+// whole text when it gains focus.
+style field { width: 280; height: 32; padding: 0, 10; radius: radius-control; bg: control-fill;
+              border: 1 stroke-control; fg: text-primary; }
+style note { type: caption; fg: text-secondary; }
+
+Column #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 16;
+  Column { gap: 6; Text "hint" .note;
+    Edit #search .field { hint: "Search songs"; } }
+  Column { gap: 6; Text "on-edit: rename; select-on-focus: true" .note;
+    Edit #name .field { on-edit: rename; select-on-focus: true; }
+    Text #said .note { text: $said; } }
+  Column { gap: 6; Text "secret, set from Rust" .note;
+    Edit #secret .field { hint: "Password"; } }
+}

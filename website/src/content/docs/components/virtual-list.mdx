@@ -1,0 +1,17 @@
+---
+title: VirtualList
+description: A list of any length; only the rows in view exist.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="list" alt="A list of 100 000 songs with its scrollbar." />
+
+`widgets::list::VirtualList` keeps the rows in view and moves them as the offset changes, without
+layout. `sync(ui, count, make, fill)` makes rows it lacks with `make` and gives each row coming
+into view its item with `fill`. `wheel(dy)` scrolls; `offset` is the position in dips; `pitch`
+is the row height.
+
+The rail beside it is a [Scrollbar](/components/scrollbar/).
+
+<Recipe name="list" />

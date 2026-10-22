@@ -1,0 +1,20 @@
+---
+title: Edit
+description: 单行文本框。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="edit" alt="三个文本框：提示文字、有焦点且有内容的框、密码框。" />
+
+`Edit` 是单行文本框，行为和 Windows 编辑控件一致：光标、选区、Ctrl 按词移动、剪贴板、双击选词、行内输入法组字。
+
+| 属性 / 调用 | 作用 |
+|---|---|
+| `hint` | 文本框为空时显示的文字 |
+| `on-edit: name` | 它的 `Edit`、`Submit`（回车）、`Blur`、`Cancel`（Esc）事件携带的动作 |
+| `select-on-focus: true` | 获得焦点时全选，输入即替换 |
+| `bg-focus`、`border-focus`、`underline`、`underline-focus` | 有焦点时的外观 |
+| `ui.set_edit_text`、`ui.set_edit_secret`、`ui.set_focus` | 从 Rust 调用 |
+
+<Recipe name="edit" />

@@ -1,0 +1,12 @@
+---
+title: Text
+description: 一种样式的一段文字。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="text" alt="字号阶梯、两行省略、含中日韩文字的居中换行，以及从 Rust 设置的文字。" />
+
+`Text "…"` 或 `text: $binding` 给出字符串。`type` 从字号阶梯取字号、行高和字重；`font-size`、`line`、`weight` 分别设置它们。`lines: 0` 不限行数地换行，`lines: n` 在第 n 行末尾加省略号；`text-align` 取 `left`、`center` 或 `right`。字体和断行见[文字](/zh-cn/concepts/text/)。
+
+<Recipe name="text" />

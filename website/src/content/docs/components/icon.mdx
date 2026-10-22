@@ -1,0 +1,14 @@
+---
+title: Icon
+description: A glyph from nova-icons.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="icon" alt="Icons at five sizes, in five colours, one icon cut out of another, and a volume button." />
+
+`Icon Name` draws a [nova-icons](/icons/) glyph in the element's `fg` at `icon-size` dips.
+`icon: $binding` takes an `Icon` value from Rust. `icon-cut: Other 60` knocks a second glyph out
+of the first (at 60 % of its size).
+
+<Recipe name="icon" />

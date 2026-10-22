@@ -1,0 +1,21 @@
+---
+title: Edit
+description: A single-line text field.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="edit" alt="Three text fields: a hint, a focused field with its text, and a password field." />
+
+`Edit` is a single-line field that behaves like the Windows edit control: caret, selection,
+word moves with Ctrl, the clipboard, double-click to select a word, and inline IME composition.
+
+| Property / call | Does |
+|---|---|
+| `hint` | text shown while the field is empty |
+| `on-edit: name` | the action its `Edit`, `Submit` (Enter), `Blur` and `Cancel` (Esc) events carry |
+| `select-on-focus: true` | focus selects the whole text, so typing replaces it |
+| `bg-focus`, `border-focus`, `underline`, `underline-focus` | the focused look |
+| `ui.set_edit_text`, `ui.set_edit_secret`, `ui.set_focus` | from Rust |
+
+<Recipe name="edit" />

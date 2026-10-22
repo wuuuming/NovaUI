@@ -1,0 +1,14 @@
+---
+title: Image
+description: 显示应用给它的图像。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="image" alt="同一张图的三种显示：圆角、取中心正方形的圆形、半透明。" />
+
+`Image` 负责摆放图片和圆角；像素来自 Rust 的 `ImageHandle`（`ImageHandle::rgba8(w, h, pixels)`，或由 `novaui::image` 解码）。句柄是驻留且共享的：三个元素显示同一张图只占一份纹理。
+
+`ImageContent { image, opacity, fit_square, hdr }`：`fit_square` 显示中心的正方形，而不是整张图；`hdr` 让带增益图的 JPEG 在 HDR 显示器上（Windows，Direct3D 11）显示其 HDR 版本，画面亮处可以超过 SDR 白。其余内容仍是 SDR 白。
+
+<Recipe name="image" />

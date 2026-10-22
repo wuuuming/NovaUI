@@ -1,0 +1,12 @@
+---
+title: Custom
+description: 由应用自己的程序绘制的元素。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="custom" alt="一张图，和同一张图经过双色调效果。" />
+
+`Custom` 的内容属于应用。这里它是一个**图像效果**：用 `image::effect::register` 注册的程序，写两遍——GPU 后端用 WGSL，软件渲染器用 Rust（两者误差须在 2/255 以内）。WGSL 在应用构建时编译，而不是运行时：应用的 `build.rs` 调用 `novaui_shaders::build_effect("name", "src/effect.wgsl", "function")`（把 `novaui-shaders` 作为构建依赖），程序里用 `novaui::effect_shaders!("name")` 取得结果；WGSL 有错时构建直接失败。元素用 `Content::Effect` 显示它；它的四个 `params` 就是应用要动画的东西。
+
+<Recipe name="custom" />

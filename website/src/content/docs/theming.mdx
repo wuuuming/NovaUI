@@ -1,0 +1,66 @@
+---
+title: Theming
+description: Tokens, the installed theme, and the WinUI and Material 3 presets.
+---
+import Shot from '../../components/Shot.astro';
+import Recipe from '../../components/Recipe.astro';
+
+A bare name in a sheet (`accent`, `card-fill`, `body`, `radius-control`, `shadow-flyout`,
+`material: acrylic`) is a **token**. The sheet's own `token` lines come first; the rest resolve
+through the installed `theme::Theme`. A token is one of:
+
+| `Tok` | Used by | Example |
+|---|---|---|
+| `Color` | `bg`, `fg`, `border`, … | `accent` |
+| `Num` | any length | `radius-control` |
+| `Type(size, line, weight)` | `type` | `body` |
+| `Shadow(sigma, dy, colour)` | `shadow` | `shadow-flyout` |
+| `Material` | `material` | `acrylic` |
+
+`theme::install(theme)` makes a theme current. Names are resolved **when a sheet is built**, so
+install the theme before building; what is already built keeps its look.
+
+## Presets
+
+| Preset | Names |
+|---|---|
+| `Theme::winui_dark()` | the WinUI 3 dark resources: `text-primary`, `accent`, `control-fill`, `card-fill`, `stroke-surface`, the type ramp (`caption` … `display`), `radius-control`, `shadow-flyout`, `acrylic`. In force until an app installs another. |
+| `Theme::material3_dark()`, `material3_light()` | the Material 3 baseline (seed `#6750A4`) under M3's system token names (below) |
+| `Theme::empty()` | nothing: an app's own theme from scratch |
+
+A theme is a table: start from a preset and `set` what differs.
+
+<Shot name="theme" alt="The same card under WinUI dark and under an app's warmer theme." />
+
+<Recipe name="theme" />
+
+## Material 3
+
+The Material 3 presets name tokens as M3 does, with dashes:
+
+| Group | Tokens |
+|---|---|
+| Colour roles | `md-sys-color-primary`, `on-primary`, `primary-container`, … `surface`, `surface-container-low` … `highest`, `outline`, `outline-variant`, `inverse-*`, `shadow`, `scrim` (all `md-sys-color-*`) |
+| Typescale | `md-sys-typescale-display-large` … `label-small` (size, line height, weight) |
+| Shape | `md-sys-shape-corner-none`, `extra-small` (4), `small` (8), `medium` (12), `large` (16), `extra-large` (28), `full` |
+| Elevation | `md-sys-elevation-level0` … `level5` |
+| State layers | `md-sys-state-hover-state-layer-opacity` (0.08), `focus` (0.10), `pressed` (0.10), `dragged` (0.16) |
+
+`accent`, the colour novaui itself uses for a text field's selection, is set to the scheme's
+primary.
+
+What novaui does not draw is approximated or left to the app:
+
+- **State layers.** M3 lays the content colour over the container at the state's opacity; in
+  novaui hover and press are colours (`bg-hover`, `bg-press`). The recipe below computes them
+  from the scheme into tokens of its own (`app-primary-hover`).
+- **Elevation** is one shadow; M3 draws a key and an ambient shadow.
+- **Typescale** has no letter spacing.
+- **Dynamic colour** (a scheme from a seed colour, HCT) is not built in: for another scheme,
+  `set` its roles on a preset.
+- **Fonts.** M3 specifies Roboto; novaui draws with its own font chain (Noto) unless the app
+  installs another family (`Tree::set_font`).
+
+<Shot name="material" alt="Buttons, chips, an elevated card and a FAB in the Material 3 dark and light schemes." />
+
+<Recipe name="material" />

@@ -1,0 +1,19 @@
+---
+title: Custom
+description: An element drawn by the app's own program.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="custom" alt="A picture beside the same picture through a duotone effect." />
+
+`Custom` is an element whose content is the app's. Here it is an **image effect**: a program
+registered with `image::effect::register`, given twice, in WGSL for the GPU backends and in Rust
+for the software renderer (the two must agree within 2/255). The WGSL is compiled when the app is
+built, not when it runs: the app's `build.rs` calls
+`novaui_shaders::build_effect("name", "src/effect.wgsl", "function")` (with `novaui-shaders` as a
+build dependency), and the program takes the result with `novaui::effect_shaders!("name")`; a
+WGSL error stops the build. The element shows it with `Content::Effect`; its four `params` are
+what the app animates.
+
+<Recipe name="custom" />

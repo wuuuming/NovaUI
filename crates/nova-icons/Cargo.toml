@@ -1,0 +1,21 @@
+# nova-icons — the kernel's icon set: Fluent UI System Icons outlines and a CPU coverage rasterizer.
+#
+# Both apps draw icons from here instead of a system icon font, so an icon looks the same on
+# Windows 10, Windows 11 and every other platform. The outlines are compiled into the crate as
+# path data (`data/paths.bin`, written by `tools/icons/gen.mjs` from the SVGs under `assets/`), so
+# neither the build nor the product needs a network, a font or an SVG parser. No dependencies:
+# the rasterizer is a few hundred lines of exact-area accumulation, deterministic and host-blind
+# (painter's atlas and an egui texture consume the same `CoverageTile`).
+[package]
+name = "nova-icons"
+version = "0.0.1"
+edition = "2021"
+# The Fluent outlines retain their MIT licence (assets/LICENSE); the nova: outlines are ours.
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true

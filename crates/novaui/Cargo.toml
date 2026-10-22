@@ -1,0 +1,91 @@
+[package]
+name = "novaui"
+version = "0.0.1"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+description = "Retained, damage-driven UI framework: work per frame is proportional to what changed."
+
+[features]
+# `novaui::backend`: the renderer interface and the CPU renderer, for headless drivers.
+backend = []
+
+[dependencies]
+ab_glyph = "=0.2.32"
+# Shapes runs of text into positioned glyphs (HarfBuzz's own Rust port): ligatures, kerning,
+# contextual forms, Indic reordering, Arabic joining. ab_glyph still rasterises the glyphs.
+harfrust = "=0.14.0"
+# The Unicode bidirectional algorithm (UAX #9): visual order of mixed-direction lines.
+unicode-bidi = "=0.3.18"
+# Line break opportunities (UAX #14).
+unicode-linebreak = "=0.1.5"
+# Each char's script (UAX #24): a run is shaped with its script's rules.
+unicode-script = "=0.5.8"
+# Grapheme clusters: the caret and selection step over what the user sees as one character.
+unicode-segmentation = "=1.13.3"
+# Fills vector shapes given as data (`Path`): already ab_glyph's own rasterizer.
+ab_glyph_rasterizer = "=0.1.10"
+# Hashes the maps keyed by short strings and ids that a frame looks up (sheet names, text
+# measurements): SipHash was a tenth of a resize step. Already in the tree through hashbrown.
+foldhash = "=0.1.5"
+# QR codes as images (`qr::rgba`).
+qrcodegen = "=1.8.0"
+# Encoded images to handles (`image::decode`), and the content key of their cache.
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
+sha2 = "=0.11.0"
+ash = { version = "=0.38.0", default-features = false, features = ["loaded", "std"] }
+taffy = { version = "=0.14.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "block_layout", "content_size"] }
+nova-icons = { path = "../nova-icons" }
+# The accessibility tree (screen readers): AccessKit's schema, and below its platform adapters.
+accesskit = "=0.25.1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = [
+  "Win32_Foundation", "Win32_Devices_Display", "Win32_Graphics_Gdi", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Direct3D_Fxc", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Dwm", "Win32_Graphics_DirectComposition",
+  "Win32_UI_WindowsAndMessaging", "Win32_System_LibraryLoader", "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_Shell_Common",
+  "Win32_UI_Controls", "Win32_System_Com", "Win32_Storage_FileSystem", "Win32_System_Memory",
+  "Win32_UI_Input_Ime", "Win32_Security", "Win32_System_ProcessStatus", "Win32_System_WindowsProgramming", "Win32_Globalization", "Win32_System_Ole", "Win32_System_DataExchange",
+  "Foundation", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture",
+] }
+
+[target.'cfg(windows)'.dependencies.accesskit_windows]
+# UI Automation. It brings its own `windows` (0.62) beside ours.
+version = "=0.35.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# AT-SPI over D-Bus (zbus on its own thread).
+accesskit_unix = "=0.24.0"
+x11-dl = "=2.21.0"
+libc = "=0.2.189"
+# Wayland host: libwayland-client and libxkbcommon are loaded at run time (dlopen), so a binary
+# built here still starts on an X11-only system.
+wayland-client = { version = "=0.31.15", features = ["system"] }
+wayland-backend = { version = "=0.3.17", features = ["client_system", "dlopen"] }
+wayland-protocols = { version = "=0.32.13", features = ["client", "staging", "unstable"] }
+wayland-protocols-plasma = { version = "=0.3.12", features = ["client"] }
+wayland-cursor = "=0.31.14"
+xkbcommon-dl = "=0.4.2"
+
+[build-dependencies]
+# The renderer's shaders (and the examples' image effect) compiled at build time: no shader
+# compiler in the program.
+novaui-shaders = { path = "../novaui-shaders" }
+
+[dev-dependencies]
+# Itself, with `backend`: the unit tests and examples drive frames headless.
+novaui = { path = ".", features = ["backend"] }
+image = { version = "=0.25.10", default-features = false }
+# The documentation site's screenshots (`examples/docs-shots`) are written as PNGs.
+png = "=0.18.1"
+
+[[example]]
+name = "gallery"
+required-features = ["backend"]
+
+[[example]]
+name = "docs-shots"
+required-features = ["backend"]
+
+[lints]
+workspace = true

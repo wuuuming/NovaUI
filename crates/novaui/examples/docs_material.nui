@@ -1,0 +1,40 @@
+// Material 3: the M3 system tokens (`md-sys-color-*`, `md-sys-typescale-*`, `md-sys-shape-*`,
+// `md-sys-elevation-*`) from `Theme::material3_dark` / `material3_light`. The `app-*` state layer
+// colours are the app's own tokens, made from the scheme in Rust (M3 lays the content colour over
+// the container at `md-sys-state-*-state-layer-opacity`).
+style label { type: md-sys-typescale-label-large; }
+style pill { height: 40; padding: 0, 24; gap: 8; radius: md-sys-shape-corner-full; }
+
+component Showcase(title) {
+  Column { width: 360; padding: 20; gap: 16; radius: md-sys-shape-corner-large; bg: md-sys-color-surface;
+           border: 1 md-sys-color-outline-variant;
+    Text { text: $title; type: md-sys-typescale-title-large; fg: md-sys-color-on-surface; }
+    Row { gap: 8;
+      Button .pill { bg: md-sys-color-primary; bg-hover: app-primary-hover; bg-press: app-primary-press;
+        Text "Filled" .label { fg: md-sys-color-on-primary; } }
+      Button .pill { bg: md-sys-color-secondary-container; bg-hover: app-tonal-hover; bg-press: app-tonal-press;
+        Text "Tonal" .label { fg: md-sys-color-on-secondary-container; } }
+      Button .pill { padding: 0, 16; border: 1 md-sys-color-outline; bg-hover: app-text-hover; bg-press: app-text-press;
+        Text "Outlined" .label { fg: md-sys-color-primary; } }
+    }
+    Row { gap: 8;
+      Row { height: 32; padding: 0, 16, 0, 8; gap: 8; radius: md-sys-shape-corner-small; bg: md-sys-color-secondary-container;
+        Icon Checkmark { icon-size: 18; fg: md-sys-color-on-secondary-container; }
+        Text "Selected" .label { fg: md-sys-color-on-secondary-container; } }
+      Row { height: 32; padding: 0, 16; radius: md-sys-shape-corner-small; border: 1 md-sys-color-outline-variant;
+        Text "Chip" .label { fg: md-sys-color-on-surface-variant; } }
+    }
+    Row { gap: 16; align: end;
+      Column { grow: 1; padding: 16; gap: 4; radius: md-sys-shape-corner-medium; bg: md-sys-color-surface-container-low;
+               shadow: md-sys-elevation-level1;
+        Text "Elevated card" { type: md-sys-typescale-title-medium; fg: md-sys-color-on-surface; }
+        Text "surface-container-low, level 1" { type: md-sys-typescale-body-medium; fg: md-sys-color-on-surface-variant; }
+      }
+      Button { size: 56; radius: md-sys-shape-corner-large; bg: md-sys-color-primary-container; shadow: md-sys-elevation-level3;
+               bg-hover: app-fab-hover; bg-press: app-fab-press;
+        Icon Add { icon-size: 24; fg: md-sys-color-on-primary-container; } }
+    }
+  }
+}
+
+Row #root { width: 100%; height: 100%; bg: #202020; padding: 24; gap: 24; align: start; }

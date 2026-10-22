@@ -1,0 +1,11 @@
+// QR: `widgets::qr::image(text)` makes the code as an image; an Image element shows it.
+style note { type: caption; fg: text-secondary; }
+
+Row #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 24; align: start;
+  Box { padding: 8; radius: 8; bg: white;
+    Image #code { size: 160; } }
+  Column { gap: 8; width: 220;
+    Text "Scan to sign in" { type: subtitle; }
+    Text #link .note { lines: 0; text: $link; }
+  }
+}

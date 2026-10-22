@@ -1,0 +1,13 @@
+---
+title: 图标
+description: nova-icons 的全部字形，按名字列出。
+---
+import IconGrid from '../../../components/IconGrid.astro';
+
+`nova-icons` 包含 [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons)（MIT）的轮廓和一个 CPU 光栅器。字形是一个 `Icon` 值（`Icon::Play`），在样式表里按名字书写（`Icon Play { icon-size: 20; }`），以元素的 `fg` 颜色、任意大小绘制。
+
+下面的列表在构建站点时从 `crates/nova-icons/src/generated.rs` 读出，每个字形由 novaui 以 24 dip 绘制（`docs-shots`）。
+
+添加图标：把 SVG 放进 `crates/nova-icons/assets/svg/`，在 `manifest.tsv` 加一行，然后运行 `node tools/icons/gen.mjs`，它会重新生成 `data/paths.bin` 和 `src/generated.rs`。
+
+<IconGrid />

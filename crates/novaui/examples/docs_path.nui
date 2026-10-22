@@ -1,0 +1,20 @@
+// Path: a vector mark given as data. `d` is an outline in a `view`-unit square (M L H V Q C Z,
+// absolute), filled in `fg` at `icon-size`.
+style note { type: caption; fg: text-secondary; }
+
+Row #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 32; align: start;
+  Column { gap: 8; align: center;
+    Path { view: 24; d: "M12 3 L21 20 L3 20 Z"; icon-size: 48; fg: accent; }
+    Text "lines" .note; }
+  Column { gap: 8; align: center;
+    Path { view: 24; d: "M12 21 C6 16 2 12.5 2 8.5 C2 5.5 4.5 3 7.5 3 C9.5 3 11 4 12 5.5 C13 4 14.5 3 16.5 3 C19.5 3 22 5.5 22 8.5 C22 12.5 18 16 12 21 Z";
+      icon-size: 48; fg: #FF99A4; }
+    Text "cubic curves" .note; }
+  Column { gap: 8; align: center;
+    Path { view: 100; d: "M10 90 Q50 -30 90 90 Z"; icon-size: 48; fg: #6CCB5F; }
+    Text "quadratic, view: 100" .note; }
+  Column { gap: 8; align: center;
+    Button #shape { size: 64; radius: radius-control; bg: control-fill; bg-hover: control-fill-secondary; on-click: next;
+      Path { view: 24; d: $shape; icon-size: 40; } }
+    Text "d: $shape (click it)" .note; }
+}

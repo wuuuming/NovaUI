@@ -1,0 +1,21 @@
+---
+title: Flyout
+description: A light-dismiss menu placed against its anchor.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="flyout" alt="A Sort by button with its menu open below it." />
+
+`widgets::Flyout` shows one host element as a flyout:
+
+1. `reset` clears the host's rows; the app adds rows (here, components instantiated into it).
+2. `open(place, anchor)` shows it and registers it as a popup.
+3. After layout, `place` reads the rows and the anchor and picks the side (`Place::on(anchor,
+   Side::Below, Along::Start, gap)`, flipping to the roomier side), the height and the scroll.
+4. A press outside raises `Event::PressOutside`; a press on the anchor closes it rather than
+   opening it again. `close` plays the exit.
+
+The widget holds no ids and sets no sizes: the host and its rows are the sheet's.
+
+<Recipe name="flyout" />

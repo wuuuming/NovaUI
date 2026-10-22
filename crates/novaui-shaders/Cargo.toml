@@ -1,0 +1,16 @@
+# novaui-shaders — NovaUI's GPU programs, compiled when a program is built rather than when it
+# runs: the renderer's WGSL (`src/prims.wgsl`) and an app's image effects, translated by naga to
+# HLSL (D3D11 compiles it at start with the system's compiler) and SPIR-V (Vulkan). A build
+# dependency only: neither naga nor the WGSL reaches the program.
+[package]
+name = "novaui-shaders"
+version = "0.0.1"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+naga = { version = "=25.0.1", features = ["wgsl-in", "hlsl-out", "spv-out"] }
+
+[lints]
+workspace = true

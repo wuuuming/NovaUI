@@ -1,0 +1,29 @@
+// Flyout: a light-dismiss menu. Its host is an ordinary element (hidden until opened); its rows
+// are components the app instantiates into it at each opening.
+style menu { position: absolute; shown: false; layer: true; material: acrylic; border: 1 stroke-flyout;
+             radius: radius-overlay; shadow: shadow-flyout; padding: 4; hit: true; width: 200; }
+style menu-item { height: 36; padding: 0, 11; gap: 12; radius: radius-control; hit: true; shrink: 0;
+                  bg-hover: control-fill-secondary; bg-press: control-fill-tertiary; }
+
+component MenuItem(icon, label) {
+  Row #item .menu-item { width: 100%;
+    Icon { icon: $icon; icon-size: 16; }
+    Text { text: $label; type: body; grow: 1; }
+  }
+}
+component MenuRule() {
+  Box { width: 100%; height: 1; bg: divider; margin: 4, 0; }
+}
+
+Column #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 12;
+  Row { gap: 12;
+    Button #sort { height: 32; padding: 0, 12; gap: 8; radius: radius-control; bg: control-fill;
+                   bg-hover: control-fill-secondary; border: 1 stroke-control; on-click: open;
+      Text { text: $sort; type: body; }
+      Icon ChevronDown { icon-size: 12; fg: text-secondary; }
+    }
+    Text "Press it; a press outside or a row closes the flyout." { type: caption; fg: text-secondary; }
+  }
+  // The host, last so it paints over the rest.
+  Column #menu .menu;
+}

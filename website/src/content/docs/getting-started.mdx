@@ -1,0 +1,35 @@
+---
+title: Getting started
+description: A window with a .nui sheet and a button that counts its clicks.
+---
+import Shot from '../../components/Shot.astro';
+import Recipe from '../../components/Recipe.astro';
+
+A NovaUI app is a type that implements `App`, a `.nui` sheet for its look, and a call to
+`platform::run`. This one draws its own title bar, a heading, a line of text bound to `$count`,
+and a button that sends the action `add` when it is clicked.
+
+<Shot name="hello" alt="The hello window: title bar, heading, text and an accent button." />
+
+<Recipe name="hello" />
+
+## What happens
+
+1. **`platform::run`** opens the window and calls the closure with the window's `Ui`. The app is
+   made there, so it can make its handles (timers, tickers, wakers) before the first turn.
+2. **`init`** builds the sheet under the window's root element (`Doc::build`) and gives the
+   binding `$count` its first value (`Doc::set`).
+3. A click on an element with `on-click: add` comes to **`event`** as `Event::Click` carrying the
+   action `add`. The app changes its state and sets the binding again; only the text that reads
+   `$count` is laid out and painted.
+4. **`after_layout`** runs after the layout of every turn that delivered the app something.
+   `Doc::update` applies the sheet's expressions there.
+5. **`nc_hit`** tells the host which parts of the window are the caption: the window has no
+   system frame, so the app's bar drags it and the app's button closes it.
+
+When nothing happens, nothing runs: the window makes no frames until the next input.
+
+## Next
+
+- [The `.nui` language](/concepts/nui/) for what a sheet can say.
+- [Events and their lifecycle](/concepts/events/) for everything `event` can receive.

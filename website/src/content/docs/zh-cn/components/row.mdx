@@ -1,0 +1,12 @@
+---
+title: Row
+description: 子元素从左到右排列。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="row" alt="几行：gap、justify center、justify between、grow，以及换行的小块。" />
+
+`Row` 把子元素从左到右排列，默认在纵向居中。`grow` 按比例分配剩余空间；`wrap-children: true` 在放不下时把子元素折到下一行。
+
+<Recipe name="row" />

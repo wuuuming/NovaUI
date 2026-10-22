@@ -1,0 +1,106 @@
+# The kernel icon table: one row per `Icon`. `tools/icons/gen.mjs` compiles it (with the SVGs under
+# assets/svg and the boxes in segoe-boxes.tsv) into src/generated.rs and data/paths.bin.
+#
+# id      the `Icon` variant.
+# key     the character that stands for the icon in text (hex). An icon that replaced a Segoe
+#         Fluent Icons / Segoe MDL2 Assets glyph keeps that glyph's code point; the rest count up
+#         from U+F0000.
+# fluent  the Fluent UI System Icons asset name; its 16/20/24 masters that exist are compiled.
+#         `nova:<Name>` is one of the kernel's own outlines (assets/svg/ic_nova_*.svg), drawn for a
+#         mark Fluent has no match for.
+# variant regular | filled.
+# box     where the ink goes in the em box: `segoe` = the Segoe glyph of this key, `segoe:XXXX` =
+#         the Segoe glyph of another key (a variant of that icon), `native` = the outline's own ink
+#         box in its 24-unit grid.
+# used by who draws it, for the docs.
+#
+# id	key	fluent	variant	box	used by
+Navigation	E700	Navigation	regular	segoe	Navigation-pane toggle.
+WeatherSunny	E706	Weather Sunny	regular	segoe	Title-bar theme button (light).
+WeatherMoon	E708	Weather Moon	regular	segoe	Title-bar theme button (dark).
+ChevronDown	E70D	Chevron Down	regular	segoe	Dropdowns, expanders and list disclosure.
+Dismiss	E711	Dismiss	regular	segoe	Close buttons (notices, lightbox, tabs, download dialog).
+MoreHorizontal	E712	More Horizontal	regular	segoe	Transport "more".
+Settings	E713	Settings	regular	segoe	Navigation footer.
+Search	E721	Search	regular	segoe	Navigation, search box, empty state.
+ArrowClockwise	E72C	Arrow Clockwise	regular	segoe	Refresh floating button.
+Checkmark	E73E	Checkmark	regular	segoe	Verified mark and menu checks.
+FullScreenMinimize	E73F	Full Screen Minimize	regular	segoe	Leave full screen.
+FullScreenMaximize	E740	Full Screen Maximize	regular	segoe	Full screen.
+SpeakerMute	E74F	Speaker Mute	regular	segoe	Volume, muted.
+Play	E768	Play	regular	segoe	Transport and navigation.
+Pause	E769	Pause	regular	segoe	Transport and notices.
+ChevronLeft	E76B	Chevron Left	regular	segoe	Calendar and lightbox paging.
+ChevronRight	E76C	Chevron Right	regular	segoe	Calendar, lightbox, links, collapsed chevrons.
+Person	E77B	Person	regular	segoe	Navigation footer and author marks.
+ErrorCircle	E783	Error Circle	regular	segoe	Failure cards and tab errors.
+Calendar	E787	Calendar	regular	segoe	Calendar button.
+HandPoint	E7C9	Hand Point	regular	segoe	Audience count.
+Home	E80F	Home	regular	segoe	Navigation.
+Clock	E823	Clock	regular	segoe	Navigation (history).
+Eye	E890	Eye	regular	segoe	View count.
+ArrowSync	E895	Arrow Sync	regular	segoe	Tab loading.
+ArrowUpload	E898	Arrow Upload	regular	segoe	Back-to-top floating button.
+PanelRightContract	E89F	Panel Right Contract	regular	segoe	Page full screen.
+PanelRightExpand	E8A0	Panel Right Expand	regular	segoe	Leave page full screen.
+CaptionClose	E8BB	Dismiss	regular	segoe	Caption close.
+MusicNote2	E8D6	Music Note 2	regular	segoe	Audio-track menu.
+ArrowRepeatAll	E8EE	Arrow Repeat All	regular	segoe	Loop; repeat all.
+TextBulletList	E8FD	Text Bullet List	regular	segoe	List views and media queues.
+Comment	E91C	Comment	regular	segoe	Navigation (dynamics).
+CaptionMinimize	E921	Subtract	regular	segoe	Caption minimize.
+CaptionMaximize	E922	Square	regular	segoe	Caption maximize.
+CaptionRestore	E923	Square Multiple	regular	segoe	Caption restore.
+Speaker0	E993	Speaker 0	regular	segoe	Volume, low.
+Speaker1	E994	Speaker 1	regular	segoe	Volume, medium.
+Speaker2	E995	Speaker 2	regular	segoe	Volume, high.
+ClosedCaption	ED1E	Closed Caption	regular	segoe	Subtitles and closed captions.
+SkipBack10	ED3C	Skip Back 10	regular	segoe	Transport previous.
+SkipForward30	ED3D	Skip Forward 30	regular	segoe	Transport next.
+CaretLeftFilled	EDD9	Caret Left	filled	segoe	Tab-strip scroll arrow; list back.
+CaretRightFilled	EDDA	Caret Right	filled	segoe	Tab-strip scroll arrow.
+CaretUpFilled	EDDB	Caret Up	filled	segoe	Scroll-rail arrow.
+CaretDownFilled	EDDC	Caret Down	filled	segoe	Scroll-rail arrow.
+Grid	F0E2	Grid	regular	segoe	Grid view.
+PlayFilled	F5B0	Play	filled	segoe	Card play counts; media play.
+ArrowRepeat1	E8ED	Arrow Repeat 1	regular	segoe	Repeat one.
+ArrowShuffle	E8B1	Arrow Shuffle	regular	segoe	Shuffle.
+TextQuote	E9B1	Text Quote	regular	segoe	Quote mark.
+CommentBubble	E90A	Comment	regular	segoe	Speech bubble.
+ArrowLeft	E72B	Arrow Left	regular	segoe	Back navigation.
+MusicNote1	EC4F	Music Note 1	regular	segoe	Now-playing face and media queues.
+PauseFilled	F8AE	nova:Pause	filled	segoe	Media pause: two 7.5-unit bars 6 units apart, corners 2.25, the proportions of Segoe PauseSolid.
+PreviousFilled	F0000	nova:Skip Back	filled	native	Media previous: two sharp triangles tip to base, as wide as the em and 0.62 em tall.
+NextFilled	F0001	nova:Skip Forward	filled	native	Media next: the same mark pointing forward.
+SpeakerMuteFilled	F0002	Speaker Mute	filled	segoe:E74F	Volume, muted (replaces the emboldened outline).
+Speaker0Filled	F0003	Speaker 0	filled	segoe:E993	Volume, low.
+Speaker1Filled	F0004	Speaker 1	filled	segoe:E994	Volume, medium.
+Speaker2Filled	F0005	Speaker 2	filled	segoe:E995	Volume, high.
+TextBulletListFilled	F0006	Text Bullet List	filled	segoe:E8FD	Media queues.
+ArrowRepeatAllFilled	F0007	Arrow Repeat All	filled	segoe:E8EE	Repeat all.
+ArrowRepeat1Filled	F0008	Arrow Repeat 1	filled	segoe:E8ED	Repeat one.
+ArrowShuffleFilled	F0009	Arrow Shuffle	filled	segoe:E8B1	Shuffle.
+CommentBubbleFilled	F000A	Comment	filled	segoe:E90A	Speech bubble, filled.
+ReOrderDotsVertical	F000B	Re Order Dots Vertical	regular	native	Row drag handle.
+MusicInfoFilled	F000C	nova:Music Info	filled	segoe:E90B	Media metadata: Segoe MusicInfo's three lines and beamed notes at the row's filled weight (2-unit strokes).
+Delete	F000D	Delete	regular	native	Row menu: take the item out of the list.
+Add	F000E	Add	regular	native	List menu: new list.
+Rename	F000F	Rename	regular	native	List menu: rename the open list.
+ArrowImport	F0010	Arrow Import	regular	native	List menu: import a list file.
+ArrowExport	F0011	Arrow Export	regular	native	List menu: export the open list.
+Previous	F0012	Previous	regular	native	Transport previous (the DSL's `@icon(Previous)`).
+Next	F0013	Next	regular	native	Transport next (the DSL's `@icon(Next)`).
+RingArc1	F0014	nova:Ring Arc 1	regular	native	ProgressRing: an arc of the ring through 180 degrees from 12 o'clock, in the 24-grid's 3-unit ring (radii 9 to 12); rotated and paired to draw any sweep.
+RingArc2	F0015	nova:Ring Arc 2	regular	native	ProgressRing: the same arc through 90 degrees.
+RingArc3	F0016	nova:Ring Arc 3	regular	native	ProgressRing: the same arc through 45 degrees.
+RingArc4	F0017	nova:Ring Arc 4	regular	native	ProgressRing: the same arc through 22.5 degrees.
+RingArc5	F0018	nova:Ring Arc 5	regular	native	ProgressRing: the same arc through 11.25 degrees.
+RingArc6	F0019	nova:Ring Arc 6	regular	native	ProgressRing: the same arc through 5.625 degrees, the least a ring draws.
+ListFilled	F001A	List	filled	native	WinUI List: the queue's sort.
+TargetFilled	F001B	Target	filled	native	Locate: the queue scrolls to the playing song.
+LocateRegular	F001C	nova:Locate	regular	native	Locate: a crosshair (two concentric rings, four edge ticks); the queue scrolls to the playing song.
+ArrowUpFilled	F001D	Arrow Up	filled	native	Sort direction: ascending.
+ArrowDownFilled	F001E	Arrow Down	filled	native	Sort direction: descending.
+TextFont	F001F	Text Font	regular	native	Settings: the font card.
+LocalLanguage	F0020	Local Language	regular	native	Settings: the language card.
+Keyboard	F0021	Keyboard	regular	native	Settings: the keyboard navigation card.

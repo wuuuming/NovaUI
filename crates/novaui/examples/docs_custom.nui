@@ -1,0 +1,9 @@
+// Custom: an element whose content is the app's alone. Here it draws an image through a program
+// the app registers (an image effect); the sheet only places it.
+style note { type: caption; fg: text-secondary; }
+
+Row #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 24; align: start;
+  Column { gap: 8; Image #plain { width: 240; height: 160; } Text "the image" .note; }
+  Column { gap: 8; Custom #toned { width: 240; height: 160; on-click: tone; }
+    Text "Custom, a duotone effect (click it)" .note; }
+}

@@ -1,0 +1,27 @@
+---
+title: 入门
+description: 一个带 .nui 样式表的窗口，和一个会数点击次数的按钮。
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+一个 NovaUI 应用由三部分组成：一个实现 `App` 的类型、一份描述外观的 `.nui` 样式表、一次 `platform::run` 调用。下面这个应用自己画标题栏、一个标题、一行绑定到 `$count` 的文字，以及一个点击时发送动作 `add` 的按钮。
+
+<Shot name="hello" alt="hello 窗口：标题栏、标题、文字和一个强调色按钮。" />
+
+<Recipe name="hello" />
+
+## 发生了什么
+
+1. **`platform::run`** 打开窗口，并用窗口的 `Ui` 调用闭包。应用在这里创建，所以可以在第一轮之前做好自己的句柄（定时器、ticker、waker）。
+2. **`init`** 在窗口的根元素下建出样式表（`Doc::build`），并给绑定 `$count` 第一个值（`Doc::set`）。
+3. 点击带 `on-click: add` 的元素，会以 `Event::Click`（带动作 `add`）到达 **`event`**。应用改自己的状态，再设一次绑定；只有读 `$count` 的那段文字会重新布局和绘制。
+4. **`after_layout`** 在每个给应用送来东西的轮次的布局之后运行。`Doc::update` 在这里应用样式表里的表达式。
+5. **`nc_hit`** 告诉宿主窗口的哪些部分是标题栏：窗口没有系统边框，所以由应用的标题条拖动窗口、由应用的按钮关闭窗口。
+
+什么都没发生时，什么都不运行：窗口在下一次输入之前不出任何帧。
+
+## 接下来
+
+- [`.nui` 语言](/zh-cn/concepts/nui/)：样式表能写什么。
+- [事件及其生命周期](/zh-cn/concepts/events/)：`event` 能收到的一切。

@@ -1,0 +1,14 @@
+---
+title: Button
+description: A pressable row.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="button" alt="Standard, primary, subtle and disabled buttons, and a lit toggle." />
+
+`Button` is a `Row` that can be pressed. Its look in each state is the sheet's: `bg-hover`,
+`bg-press`, `fg-disabled`, and `bg-lit` for a toggled state the app sets with `set_lit`.
+`on-click: name` sends `Event::Click` with the action `name`; `set_disabled` turns it off.
+
+<Recipe name="button" />

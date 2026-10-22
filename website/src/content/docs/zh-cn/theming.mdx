@@ -1,0 +1,58 @@
+---
+title: 主题
+description: 令牌、当前主题，以及 WinUI 和 Material 3 预设。
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+样式表里不带前缀的名字（`accent`、`card-fill`、`body`、`radius-control`、`shadow-flyout`、`material: acrylic`）是**令牌**。样式表自己的 `token` 行优先；其余通过当前安装的 `theme::Theme` 解析。令牌是以下之一：
+
+| `Tok` | 用于 | 例子 |
+|---|---|---|
+| `Color` | `bg`、`fg`、`border` 等 | `accent` |
+| `Num` | 任何长度 | `radius-control` |
+| `Type(size, line, weight)` | `type` | `body` |
+| `Shadow(sigma, dy, colour)` | `shadow` | `shadow-flyout` |
+| `Material` | `material` | `acrylic` |
+
+`theme::install(theme)` 让一个主题生效。名字在**建出样式表时**解析，所以要先安装主题再建；已经建好的部分保持原样。
+
+## 预设
+
+| 预设 | 名字 |
+|---|---|
+| `Theme::winui_dark()` | WinUI 3 暗色资源：`text-primary`、`accent`、`control-fill`、`card-fill`、`stroke-surface`、字号阶梯（`caption` … `display`）、`radius-control`、`shadow-flyout`、`acrylic`。应用安装别的主题之前一直生效。 |
+| `Theme::material3_dark()`、`material3_light()` | Material 3 基线配色（种子色 `#6750A4`），使用 M3 的系统令牌名（见下） |
+| `Theme::empty()` | 空表：应用从零开始的主题 |
+
+主题就是一张表：从预设开始，`set` 不同的部分。
+
+<Shot name="theme" alt="同一张卡片分别在 WinUI 暗色和应用自己的暖色主题下。" />
+
+<Recipe name="theme" />
+
+## Material 3
+
+Material 3 预设按 M3 的方式命名令牌，用短横线连接：
+
+| 分组 | 令牌 |
+|---|---|
+| 颜色角色 | `md-sys-color-primary`、`on-primary`、`primary-container` … `surface`、`surface-container-low` … `highest`、`outline`、`outline-variant`、`inverse-*`、`shadow`、`scrim`（都以 `md-sys-color-` 开头） |
+| 字号阶梯 | `md-sys-typescale-display-large` … `label-small`（字号、行高、字重） |
+| 形状 | `md-sys-shape-corner-none`、`extra-small`（4）、`small`（8）、`medium`（12）、`large`（16）、`extra-large`（28）、`full` |
+| 高度 | `md-sys-elevation-level0` … `level5` |
+| 状态层 | `md-sys-state-hover-state-layer-opacity`（0.08）、`focus`（0.10）、`pressed`（0.10）、`dragged`（0.16） |
+
+`accent`（novaui 自己用作文本框选区的颜色）被设为配色的 primary。
+
+novaui 画不出的部分做了近似，或留给应用：
+
+- **状态层。** M3 把内容色以状态的不透明度叠在容器色上；novaui 里悬停和按下是颜色（`bg-hover`、`bg-press`）。下面的示例从配色算出这些颜色，存成应用自己的令牌（`app-primary-hover`）。
+- **高度**只有一层阴影；M3 画主阴影和环境阴影两层。
+- **字号阶梯**没有字间距。
+- **动态配色**（从种子色经 HCT 生成配色）没有内置：要换配色，在预设上 `set` 各个角色。
+- **字体。** M3 规定用 Roboto；novaui 用自己的字体链（Noto），除非应用安装别的字体族（`Tree::set_font`）。
+
+<Shot name="material" alt="Material 3 暗色和亮色配色下的按钮、选择块、浮起卡片和 FAB。" />
+
+<Recipe name="material" />

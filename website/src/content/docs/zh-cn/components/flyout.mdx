@@ -1,0 +1,19 @@
+---
+title: Flyout
+description: 贴着锚点放置、点外面即关闭的菜单。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="flyout" alt="一个“Sort by”按钮，下面展开了它的菜单。" />
+
+`widgets::Flyout` 把一个宿主元素显示为浮出菜单：
+
+1. `reset` 清掉宿主里的行；应用添加行（这里是实例化进去的组件）。
+2. `open(place, anchor)` 显示它，并把它登记为弹出层。
+3. 布局之后，`place` 读取各行和锚点，选定方向（`Place::on(anchor, Side::Below, Along::Start, gap)`，空间不够时翻到另一侧）、高度和滚动位置。
+4. 在外面按下产生 `Event::PressOutside`；在锚点上按下会关闭它而不是再次打开。`close` 播放退出动画。
+
+部件不持有 id，也不设尺寸：宿主和行都由样式表决定。
+
+<Recipe name="flyout" />

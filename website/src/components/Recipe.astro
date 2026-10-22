@@ -1,0 +1,45 @@
+---
+// A recipe: `crates/novaui/examples/docs_<name>.rs`, its `.nui` sheet and its `.wgsl` program
+// (an image effect), shown as they are in
+// the repository. CI builds every one of them (`cargo build --examples`), so a page never shows
+// code that does not compile.
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components';
+
+interface Props {
+  name: string;
+}
+const { name } = Astro.props;
+const files = import.meta.glob('../../../crates/novaui/examples/docs_*.{rs,nui,wgsl}', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>;
+const at = (ext: string) => files[`../../../crates/novaui/examples/docs_${name}.${ext}`];
+const rs = at('rs');
+const nui = at('nui');
+const wgsl = at('wgsl');
+if (!rs) throw new Error(`no recipe examples/docs_${name}.rs`);
+---
+
+<Tabs syncKey="recipe">
+  {
+    nui && (
+      <TabItem label=".nui">
+        <Code code={nui} lang="scss" title={`examples/docs_${name}.nui`} />
+      </TabItem>
+    )
+  }
+  <TabItem label="Rust">
+    <Code code={rs} lang="rust" title={`examples/docs_${name}.rs`} />
+  </TabItem>
+  {
+    wgsl && (
+      <TabItem label="WGSL">
+        <Code code={wgsl} lang="wgsl" title={`examples/docs_${name}.wgsl`} />
+      </TabItem>
+    )
+  }
+</Tabs>
+<p>
+  <code>cargo run -p novaui --example docs_{name}</code>
+</p>

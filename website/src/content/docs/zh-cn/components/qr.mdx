@@ -1,0 +1,12 @@
+---
+title: QR
+description: 作为图像的二维码。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="qr" alt="一个登录链接的二维码和它的文字。" />
+
+`widgets::qr::image(text)` 把二维码做成 `ImageHandle`；用一个 `Image` 元素显示。给它留一圈浅色边（这里是带内边距的白盒子），手机才能扫出来。
+
+<Recipe name="qr" />

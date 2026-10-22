@@ -1,0 +1,15 @@
+// Column: children top to bottom. `align` places them across, `justify` along.
+style col { width: 150; height: 196; padding: 10; gap: 8; radius: 6; bg: card-fill; border: 1 stroke-surface; }
+style bar { height: 24; radius: 4; bg: #6660CDFF; }
+style short { width: 70; }
+style long { width: 110; }
+style Text { type: caption; fg: text-secondary; }
+
+Row #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 16; align: start;
+  Column .col { Text "align: stretch"; Box .bar; Box .bar; }
+  Column .col { align: center; Text "align: center"; Box .bar .short; Box .bar .long; }
+  Column .col { align: end; Text "align: end"; Box .bar .short; Box .bar .long; }
+  Column .col { justify: between; Text "justify: between"; Box .bar .short; Box .bar .long; }
+  // Its rows come from data, in Rust.
+  Column .col #songs { gap: 4; Text "children from Rust"; }
+}

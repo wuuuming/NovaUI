@@ -1,0 +1,20 @@
+---
+// Every nova-icons glyph, read from `crates/nova-icons/src/generated.rs` (its `/// | \`Name\``
+// table), each with its shot from `public/shots/icons/`.
+import generated from '../../../crates/nova-icons/src/generated.rs?raw';
+
+const names = [...generated.matchAll(/^\/\/\/ \| `([A-Za-z0-9]+)`/gm)].map((m) => m[1]);
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+---
+
+<p>{names.length} glyphs.</p>
+<div class="nova-icons">
+  {
+    names.map((name) => (
+      <figure>
+        <img src={`${base}/shots/icons/${name}.png`} alt={name} loading="lazy" />
+        <figcaption>{name}</figcaption>
+      </figure>
+    ))
+  }
+</div>

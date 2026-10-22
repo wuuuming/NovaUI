@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/novaui", "crates/nova-icons", "crates/novaui-shaders"]
+
+# Every crate inherits these (`[lints] workspace = true`). principles.md B4: an `unsafe` block
+# states its contract; leftovers of debugging do not reach a commit.
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+dbg_macro = "deny"
+todo = "deny"
+
+[workspace.dependencies]
+windows = "=0.58.0"
+
+[profile.dev.package."*"]
+opt-level = 2

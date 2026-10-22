@@ -1,0 +1,20 @@
+// VirtualList and Scrollbar: a list of 100 000 songs. Only the rows in view exist; the rail beside
+// it is the Scrollbar widget's skin (a root that hears drags, hovers and wheels, a track, a thumb).
+let pitch = 32;
+let rail_width = 12;
+token rail-track = #0FFFFFFF;
+token rail-thumb = #8BFFFFFF;
+
+Column #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 8;
+  Text #count { type: caption; fg: text-secondary; text: $count; }
+  Stack { grow: 1; radius: 8; clip: true; bg: card-fill; border: 1 stroke-surface;
+    // The rows live here; `wheel-events` sends the wheel to the app.
+    Box #view { left: 0; top: 0; right: 0; bottom: 0; clip: true; wheel-events: true; }
+    // Inset from the frame (its 1-dip border and 8-dip corners), so the rail stays inside it.
+    Box #rail { right: 3; top: 6; bottom: 6; width: rail_width;
+                hit: true; drag-events: true; hover-events: true; wheel-events: true;
+      Box #rail-track { bg: rail-track; }
+      Box #rail-thumb { bg: rail-thumb; }
+    }
+  }
+}

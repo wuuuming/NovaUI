@@ -1,0 +1,25 @@
+// Text: one run of text in one style. `type` takes a size, line height and weight from the type
+// ramp; `lines` limits it (0 wraps without a limit, 1 is one line with an ellipsis).
+style Text { type: body; }
+style note { type: caption; fg: text-secondary; }
+style box { width: 200; padding: 8; radius: 4; bg: card-fill; border: 1 stroke-surface; }
+
+// `on-click` on the root: a click anywhere sends `again`.
+Column #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 4; on-click: again;
+  Text "Title large" { type: title-large; }
+  Text "Title" { type: title; }
+  Text "Subtitle" { type: subtitle; }
+  Text "Body large" { type: body-large; }
+  Text "Body strong" { type: body-strong; }
+  Text "Body — 正文 本文 본문";
+  Text "Any script — مرحبا · שלום · नमस्ते · สวัสดี";
+  Text "Caption" .note;
+  Row { gap: 16; align: start; margin-top: 12;
+    Column { gap: 4; Text "lines: 2" .note;
+      Text .box { lines: 2; text: "A long sentence is cut after its second line, with an ellipsis where it stops."; } }
+    Column { gap: 4; Text "lines: 0, text-align: center" .note;
+      Text .box { lines: 0; text-align: center; text: "Wraps after spaces and between CJK characters: 换行不需要空格。"; } }
+    Column { gap: 4; Text "text: $now, set from Rust" .note;
+      Text .box #now { lines: 0; text: $now; fg: accent-text; } }
+  }
+}

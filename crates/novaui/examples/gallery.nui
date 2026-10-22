@@ -1,0 +1,26 @@
+style card { bg: #2B2B2B; radius: 8; padding: 16; gap: 10; shadow: shadow-card; border: 1 #22FFFFFF; }
+Box #root { width: 100%; height: 100%; bg: #1C1C1C;
+  Row #bar { position: absolute; left: 0; top: 0; right: 0; height: 32; padding: 0, 12; gap: 8; align: center;
+    Icon MusicNote2 { icon-size: 16; fg: text-secondary; }
+    Text { text: "NovaUI gallery — Vulkan"; type: caption; fg: text-secondary; grow: 1; }
+    Button #close { width: 46; height: 32; bg-hover: #C42B1C; on-click: close; Icon Dismiss { icon-size: 10; } }
+  }
+  Column #card .card { position: absolute; left: 24; top: 56; width: 360;
+    Text #title { text: "标题 Title — 多语言文本与折行 a long line that wraps"; type: subtitle; lines: 2; }
+    Text #body { text: "Body text."; type: body; fg: text-secondary; }
+    Row { gap: 8; height: 32;
+      Button #btn { width: 140; height: 32; radius: 4; bg: control-fill; bg-hover: #15FFFFFF; on-click: go;
+        Text #btn-label { text: "Click me"; type: body; } }
+      Edit #edit { width: 160; height: 32; padding: 0, 10; radius: 4; bg: control-fill; }
+    }
+  }
+  Image #pic { position: absolute; left: 420; top: 56; width: 300; height: 200; radius: 8; }
+  Column #menu { position: absolute; left: 470; top: 120; width: 200; padding: 4; radius: 8; layer: true;
+      material: acrylic; border: 1 stroke-flyout; shadow: shadow-flyout;
+    Row { height: 36; padding: 0, 12; gap: 12; align: center; Icon Play { icon-size: 16; } Text { text: "Play"; type: body; } }
+    Row { height: 36; padding: 0, 12; gap: 12; align: center; Icon Pause { icon-size: 16; } Text { text: "暂停"; type: body; } }
+  }
+  Column #panel { position: absolute; left: 24; top: 300; width: 360; height: 140; layer: true; bg: #3A3A3A; radius: 8; padding: 12;
+    Text #panel-text { text: "A layered panel"; type: body-strong; }
+  }
+}

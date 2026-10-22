@@ -1,0 +1,21 @@
+---
+// A screenshot from `public/shots/`, rendered by `cargo run --example docs-shots`: the recipe's
+// own window, drawn by novaui's software renderer at 2 px per dip.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+interface Props {
+  name: string;
+  alt: string;
+}
+const { name, alt } = Astro.props;
+// Builds run in `website/` (`bun run build`, `npm run build`).
+const file = join(process.cwd(), 'public', 'shots', `${name}.png`);
+// The PNG's width and height are bytes 16..24 of its header.
+const png = readFileSync(file);
+const width = png.readUInt32BE(16) / 2;
+const height = png.readUInt32BE(20) / 2;
+const src = `${import.meta.env.BASE_URL.replace(/\/$/, '')}/shots/${name}.png`;
+---
+
+<img class="nova-shot" src={src} alt={alt} width={width} height={height} loading="lazy" />

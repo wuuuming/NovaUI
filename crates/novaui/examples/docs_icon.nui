@@ -1,0 +1,24 @@
+// Icon: a nova-icons glyph by name (`Icon Play`), drawn in the element's `fg` at `icon-size`.
+style note { type: caption; fg: text-secondary; }
+
+Column #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 20;
+  Row { gap: 20;
+    Icon Play { icon-size: 16; } Icon Play { icon-size: 20; } Icon Play { icon-size: 24; }
+    Icon Play { icon-size: 32; } Icon Play { icon-size: 48; }
+    Text "icon-size: 16, 20, 24, 32, 48" .note;
+  }
+  Row { gap: 20;
+    Icon Settings { icon-size: 24; fg: accent; } Icon Checkmark { icon-size: 24; fg: #6CCB5F; }
+    Icon ErrorCircle { icon-size: 24; fg: #FF99A4; } Icon Speaker2 { icon-size: 24; fg: text-disabled; }
+    Text "fg" .note;
+  }
+  Row { gap: 20;
+    Icon CommentBubbleFilled { icon-size: 32; } Icon CommentBubbleFilled { icon-size: 32; icon-cut: TextQuote 60; }
+    Text "icon-cut: TextQuote 60 (one icon knocked out of another)" .note;
+  }
+  Row { gap: 20;
+    Button #volume { size: 40; radius: radius-control; bg: control-fill; bg-hover: control-fill-secondary; on-click: volume;
+      Icon { icon: $volume; icon-size: 20; } }
+    Text "icon: $volume, set from Rust (click it)" .note;
+  }
+}

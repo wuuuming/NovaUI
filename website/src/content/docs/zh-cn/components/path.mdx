@@ -1,0 +1,12 @@
+---
+title: Path
+description: 以数据给出的矢量轮廓。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="path" alt="三角形、心形、二次曲线图形，以及一个会换形状的按钮。" />
+
+`Path` 用 `fg` 颜色、以 `icon-size` 填充一个轮廓。`d` 是 `view` 单位正方形里的轮廓，命令为 `M L H V Q C Z`（绝对坐标）。解析失败的轮廓什么都不画。
+
+<Recipe name="path" />

@@ -1,0 +1,19 @@
+---
+title: Scrollbar
+description: A WinUI-style scroll rail.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="list" alt="The list of 100 000 songs; its rail is the Scrollbar widget." />
+
+`widgets::scroll::Scrollbar` draws a rail from three elements of the sheet (`Parts { root, track,
+thumb }`) and a `Skin` (widths, minimum thumb, hover delays, motion). `sync(ui, parts, range,
+skin, …)` places the plates for a `Range { viewport, content, offset }` and says when it wants to
+be synced again (the app arms a `Timer` or runs a `Ticker`). `press`, `drag` and `release` turn
+pointer positions into new offsets.
+
+The plates are paint-only rectangles in stable boxes, so scrolling and hovering never lay out the
+page.
+
+<Recipe name="list" />

@@ -1,0 +1,12 @@
+---
+title: Button
+description: 可按下的 Row。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="button" alt="标准、主要、低调和禁用的按钮，以及一个点亮的开关。" />
+
+`Button` 是一个可以按下的 `Row`。它在各状态下的外观由样式表决定：`bg-hover`、`bg-press`、`fg-disabled`，以及应用用 `set_lit` 设置的切换状态 `bg-lit`。`on-click: name` 发送带动作 `name` 的 `Event::Click`；`set_disabled` 禁用它。
+
+<Recipe name="button" />

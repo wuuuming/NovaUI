@@ -1,0 +1,14 @@
+---
+title: Stack
+description: Overlapping children.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="stack" alt="An avatar with a status dot, a caption over a picture and four corner badges." />
+
+In a `Stack`, children placed with `left`, `top`, `right` or `bottom` are taken out of the flow
+and overlap; later children are drawn over earlier ones. Any element can place a child this way;
+a `Stack` is the container meant for it.
+
+<Recipe name="stack" />

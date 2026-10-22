@@ -1,0 +1,60 @@
+# The documentation site on GitHub Pages, https://wuuuming.github.io/NovaUI/: the latest release
+# (the newest `v*` tag) at the root, `main` under `versions/main/`. Built on a push to `main` and by
+# hand, never from a tag: the github-pages environment deploys `main` only, and the root is the
+# newest `v*` tag whatever ref the run started from. Pages needs a public repository on GitHub
+# Free, so a private repository skips it. The link check is `ci.yml`'s `site` job (it runs only
+# at base `/`).
+name: pages
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: read
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: the latest release at the root
+        run: |
+          tag=$(git tag --list 'v*' --sort=-v:refname | head -n 1)
+          echo "release: $tag"
+          git worktree add -q ../release "$tag"
+          cd ../release/website
+          npm ci
+          NOVAUI_DOCS_BASE=/NovaUI/ npm run build
+          mkdir -p "$GITHUB_WORKSPACE/site"
+          cp -r dist/. "$GITHUB_WORKSPACE/site/"
+      - name: main under versions/main/
+        working-directory: website
+        run: |
+          npm ci
+          NOVAUI_DOCS_BASE=/NovaUI/versions/main/ npm run build
+          mkdir -p ../site/versions/main
+          cp -r dist/. ../site/versions/main/
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

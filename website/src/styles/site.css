@@ -1,0 +1,35 @@
+/* Shots are rendered at 2 px per dip: shown at half their pixel width. */
+.nova-shot {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.5rem;
+  border: 1px solid var(--sl-color-gray-5);
+}
+.nova-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+.nova-icons figure {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border-radius: 0.5rem;
+  background: #202020;
+}
+.nova-icons img {
+  width: 40px;
+  height: 40px;
+}
+.nova-icons figcaption {
+  font-size: var(--sl-text-xs);
+  color: #c5c5c5;
+  font-family: var(--sl-font-mono);
+  word-break: break-all;
+  text-align: center;
+}

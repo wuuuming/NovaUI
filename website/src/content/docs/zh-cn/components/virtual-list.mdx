@@ -1,0 +1,14 @@
+---
+title: VirtualList
+description: 任意长度的列表；只有可见的行存在。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="list" alt="一个十万首歌的列表及其滚动条。" />
+
+`widgets::list::VirtualList` 只保留可见的行，并随偏移移动它们，不触发布局。`sync(ui, count, make, fill)` 用 `make` 补足缺的行，用 `fill` 给每个进入视野的行填上它的数据。`wheel(dy)` 滚动；`offset` 是以 dip 计的位置；`pitch` 是行高。
+
+旁边的滑轨是一个 [Scrollbar](/zh-cn/components/scrollbar/)。
+
+<Recipe name="list" />

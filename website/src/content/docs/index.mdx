@@ -1,0 +1,34 @@
+---
+title: Introduction
+description: NovaUI is a retained, damage-driven UI framework for Rust.
+---
+import Shot from '../../components/Shot.astro';
+
+NovaUI is a UI framework for Rust desktop apps. Its rule is that **the work in each frame is
+proportional to what changed**, and an idle window costs nothing: no turns, no frames, no wakes.
+
+<Shot name="hello" alt="A window with a custom title bar, a heading, a line of text and an accent button." />
+
+- **Retained.** The app builds a tree of elements once and changes properties on it. Each setter
+  knows what it invalidates (layout, paint or only position), and a frame re-records and presents
+  only the damaged regions.
+- **Declarative look, Rust logic.** Structure, layout and style are written in `.nui` sheets;
+  state and behaviour stay in Rust. Bindings (`$title`) and expressions (`window.w / 2`) connect
+  the two.
+- **Owned time.** Timers, tickers, tasks and subscriptions are handles; dropping one cancels it.
+  Nothing is scheduled anonymously, so nothing keeps the window awake by accident.
+- **Three backends, one shader.** D3D11 on Windows, Vulkan on Windows and Linux, and a software
+  renderer that every GPU path is tested against, pixel for pixel. Every screenshot on this site
+  is drawn by that renderer from the page's own example.
+- **Hosts:** Win32, Wayland and X11, each with a frameless window the app draws itself.
+
+NovaUI was written for NovaPlayer, a music player, and is used by it; the
+framework itself knows nothing about music.
+
+## Where to go next
+
+- [Installation](/installation/) and [Getting started](/getting-started/): a window with a
+  `.nui` sheet and a button.
+- [Concepts](/concepts/elements-and-layout/): how the tree, text, the language, events and the
+  frame work.
+- The elements and widgets, one page each, from [Box](/components/box/) to [QR](/components/qr/).

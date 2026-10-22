@@ -1,0 +1,15 @@
+---
+title: Text
+description: One run of text in one style.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="text" alt="The type ramp, a two-line ellipsis, centred wrapping text with CJK, and a text set from Rust." />
+
+`Text "…"` or `text: $binding` gives the string. `type` takes a size, line height and weight from
+the type ramp; `font-size`, `line` and `weight` set them one by one. `lines: 0` wraps without a
+limit, `lines: n` ends the nth line with an ellipsis; `text-align` is `left`, `center` or
+`right`. See [Text](/concepts/text/) for fonts and line breaking.
+
+<Recipe name="text" />

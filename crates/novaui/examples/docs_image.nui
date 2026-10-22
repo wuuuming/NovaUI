@@ -1,0 +1,9 @@
+// Image: a box that shows an image the app gives it (an `ImageHandle`). The sheet places it and
+// rounds it; the pixels come from Rust.
+style note { type: caption; fg: text-secondary; }
+
+Row #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 24; align: start;
+  Column { gap: 8; Image #wide { width: 240; height: 160; radius: 8; } Text "radius: 8" .note; }
+  Column { gap: 8; Image #round { size: 160; radius: 80; } Text "fit_square, radius: 80" .note; }
+  Column { gap: 8; Image #faint { size: 160; } Text "opacity: 0.4" .note; }
+}

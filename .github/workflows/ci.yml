@@ -1,0 +1,48 @@
+# CI: fmt, build, clippy and the unit tests on GitHub's Windows and Linux runners, on a push to
+# `main`, a pull request or by hand (integration tests are maintained separately). The `site` job builds the
+# documentation site (`website/`) at `/`, where the build checks every link; the recipes it shows
+# are the `docs_*` examples the `build` steps compile. `pages.yml` publishes the site.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+env:
+  CARGO_TERM_COLOR: never
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: toolchain
+        run: rustup toolchain install   # rust-toolchain.toml
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: build
+        run: cargo build --release --workspace --examples --all-features
+      - name: clippy
+        run: cargo clippy --release --workspace --all-targets --all-features -- -D warnings
+      - name: tests
+        run: cargo test --release --workspace
+        env:
+          # novaui's contracts (phase rules, damage audit) in a release build.
+          NOVAUI_AUDIT: "1"
+  site:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: install
+        working-directory: website
+        run: npm ci
+      - name: build and check links
+        working-directory: website
+        run: npm run build

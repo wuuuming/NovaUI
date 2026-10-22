@@ -1,0 +1,14 @@
+---
+title: Scrollbar
+description: WinUI 风格的滚动滑轨。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="list" alt="十万首歌的列表；它的滑轨就是 Scrollbar 部件。" />
+
+`widgets::scroll::Scrollbar` 用样式表里的三个元素（`Parts { root, track, thumb }`）和一个 `Skin`（宽度、最小滑块、悬停延迟、动画）画出滑轨。`sync(ui, parts, range, skin, …)` 按 `Range { viewport, content, offset }` 摆放底板，并告诉应用下次何时再同步（应用设一个 `Timer` 或运行一个 `Ticker`）。`press`、`drag`、`release` 把指针位置换算成新的偏移。
+
+底板是固定盒子里只影响绘制的矩形，所以滚动和悬停从不触发页面布局。
+
+<Recipe name="list" />

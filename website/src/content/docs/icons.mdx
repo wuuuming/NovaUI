@@ -1,0 +1,17 @@
+---
+title: Icons
+description: Every nova-icons glyph, by name.
+---
+import IconGrid from '../../components/IconGrid.astro';
+
+`nova-icons` holds outlines from the [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons)
+(MIT) and a CPU rasterizer. A glyph is an `Icon` value (`Icon::Play`), written by name in a
+sheet (`Icon Play { icon-size: 20; }`), and drawn in the element's `fg` at any size.
+
+The list below is read from `crates/nova-icons/src/generated.rs` when the site is built, and each
+glyph is drawn by novaui at 24 dips (`docs-shots`).
+
+To add one: put its SVG in `crates/nova-icons/assets/svg/`, add a line to `manifest.tsv`, and run
+`node tools/icons/gen.mjs`, which regenerates `data/paths.bin` and `src/generated.rs`.
+
+<IconGrid />

@@ -1,0 +1,18 @@
+---
+title: Image
+description: An image the app gives it.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="image" alt="One picture shown three ways: rounded, as a circle of its centre square, and faded." />
+
+`Image` places and rounds a picture; the pixels come from Rust as an `ImageHandle`
+(`ImageHandle::rgba8(w, h, pixels)`, or decoded by `novaui::image`). Handles are interned and
+shared: three elements showing one picture hold one texture.
+
+`ImageContent { image, opacity, fit_square, hdr }`: `fit_square` shows the centre square instead of
+the whole picture; `hdr` shows a gain-map JPEG's HDR rendition on an HDR display (Windows,
+Direct3D 11), brighter than SDR white where the picture is. Everything else stays at SDR white.
+
+<Recipe name="image" />

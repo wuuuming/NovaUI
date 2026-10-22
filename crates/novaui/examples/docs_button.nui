@@ -1,0 +1,23 @@
+// Button: a Row that is pressable (`hit`, a hand cursor). Its look in each state is the sheet's:
+// `bg-hover`, `bg-press`, `fg-disabled`, `bg-lit` (a toggled state the app sets).
+style btn { height: 32; padding: 0, 12; gap: 8; radius: radius-control; }
+style standard { bg: control-fill; bg-hover: control-fill-secondary; bg-press: control-fill-tertiary;
+                 border: 1 stroke-control; fg: text-primary; fg-disabled: text-disabled; }
+style primary { bg: accent; bg-hover: #E660CDFF; bg-press: #CC60CDFF; fg: black; }
+style subtle { bg-hover: subtle-secondary; bg-press: subtle-tertiary; fg: text-primary; }
+style note { type: caption; fg: text-secondary; }
+
+Column #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 16;
+  Row { gap: 12;
+    Button .btn .standard { on-click: standard; Text "Standard"; }
+    Button .btn .primary { on-click: primary; Icon Play { icon-size: 16; fg: black; } Text "Primary" { fg: black; } }
+    Button .btn .subtle { on-click: subtle; Icon Settings { icon-size: 16; } Text "Subtle"; }
+    Button .btn .standard #off { Text "Disabled" { fg-disabled: text-disabled; } }
+  }
+  Row { gap: 12;
+    Button .btn .subtle #shuf { width: 32; padding: 0; on-click: shuffle; bg-lit: subtle-secondary;
+      Icon #shuffle { icon: ArrowShuffle; icon-size: 16; fg: text-primary; } }
+    Text "bg-lit, and the icon coloured from Rust: a toggle (click it)" .note;
+  }
+  Text #said .note { text: $said; }
+}

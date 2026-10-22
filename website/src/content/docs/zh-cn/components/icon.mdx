@@ -1,0 +1,12 @@
+---
+title: Icon
+description: nova-icons 里的字形。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="icon" alt="五种尺寸、五种颜色的图标，一个图标镂空另一个，以及一个音量按钮。" />
+
+`Icon Name` 用元素的 `fg` 颜色、以 `icon-size` dip 画一个 [nova-icons](/zh-cn/icons/) 字形。`icon: $binding` 从 Rust 接收一个 `Icon` 值。`icon-cut: Other 60` 从第一个字形里镂空第二个（按其 60% 大小）。
+
+<Recipe name="icon" />

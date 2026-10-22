@@ -1,0 +1,26 @@
+---
+title: Box
+description: A plain container with a look.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="box" alt="Five boxes: a fill, a rounded bordered card, a shadow, a half-transparent accent box and acrylic over colour." />
+
+`Box` is a container: it lays its children out as a column and draws a plate behind them. Every
+element takes the visual properties shown here.
+
+| Property | Takes |
+|---|---|
+| `bg` | a colour (`#RRGGBB`, `#AARRGGBB`) or a colour token |
+| `radius` | dips, or a token such as `radius-control` |
+| `border` | width and colour: `border: 1 stroke-surface` |
+| `shadow` | a shadow token: `shadow-card`, `shadow-flyout`, `shadow-dialog` |
+| `opacity` | 0 to 1 |
+| `clip` | `true` clips the children to the box (and its radius) |
+| `material` | `acrylic` (blurred backdrop) or `acrylic-flat` |
+| `layer` | `true` gives the element its own texture |
+
+In Rust an element is `ui.tree.add(parent, Layout, Visual, Content)`, as the last tile is made.
+
+<Recipe name="box" />

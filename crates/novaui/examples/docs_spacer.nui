@@ -1,0 +1,16 @@
+// Spacer: takes the room that is left in a Row or a Column (`grow: 1`), pushing what follows it
+// to the far end.
+style bar { height: 40; padding: 0, 8; gap: 4; radius: 6; bg: card-fill; border: 1 stroke-surface; }
+style tool { size: 32; radius: radius-control; bg-hover: control-fill-secondary; }
+style Text { type: body; }
+
+Column #root { width: 100%; height: 100%; bg: solid-base; padding: 24; gap: 12;
+  Row .bar { Icon Navigation { icon-size: 16; margin: 0, 8; } Text "Library";
+    Spacer;
+    Button .tool { Icon Search { icon-size: 16; } } Button .tool { Icon Settings { icon-size: 16; } } }
+  Row .bar { Button .tool { Icon Previous { icon-size: 16; } }
+    Spacer; Text "Spacer on both sides centres this"; Spacer;
+    Button .tool { Icon Next { icon-size: 16; } } }
+  // The spacer and the right-hand text are added from Rust.
+  Row .bar #built { padding: 0, 12; Text "Left"; }
+}
