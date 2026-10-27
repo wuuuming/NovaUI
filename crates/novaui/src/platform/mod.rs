@@ -14,6 +14,10 @@ pub struct Window {
     /// The window has the keyboard.
     pub(crate) focused: bool,
     pub(crate) req: Requests,
+    /// An overlay's place as the host last saw it (`Place`); `None` for an ordinary window.
+    pub(crate) place: Option<Place>,
+    /// The work area (dips) of the display the window is on, where the host knows it.
+    pub(crate) work_area: Option<(f32, f32)>,
 }
 
 /// The system changed the window's maximized state: recorded, and the layout follows at once.
@@ -34,7 +38,15 @@ pub(crate) fn woken(pending: &std::sync::atomic::AtomicBool, ui: &mut crate::app
 
 impl Default for Window {
     fn default() -> Self {
-        Window { handle: 0, maximized: false, fullscreen: false, focused: true, req: Requests::default() }
+        Window {
+            handle: 0,
+            maximized: false,
+            fullscreen: false,
+            focused: true,
+            req: Requests::default(),
+            place: None,
+            work_area: None,
+        }
     }
 }
 
@@ -77,6 +89,74 @@ impl Window {
     pub fn discard_requests(&mut self) {
         self.req = Requests::default();
     }
+    /// An overlay's new size in dips; its bottom centre stays where it is. An ordinary window
+    /// ignores it (the user sizes it).
+    pub fn set_size(&mut self, width: f32, height: f32) {
+        self.req.size = Some((width, height));
+    }
+    /// An overlay lets the pointer through to what is under it (`true`), or takes it. While it
+    /// lets it through it still hears the pointer come and go over it (`Input::Move`,
+    /// `Input::Leave`: hover), where the system tells (not on Wayland). An ordinary window
+    /// ignores it.
+    pub fn set_click_through(&mut self, on: bool) {
+        self.req.click_through = Some(on);
+    }
+    /// Where an overlay stands (`Place`), to keep and hand back the next time it opens; `None`
+    /// for an ordinary window. `Event::Moved` says it changed.
+    pub fn place(&self) -> Option<Place> {
+        self.place
+    }
+    /// The width and height (dips) of the work area of the display the window is on (the
+    /// display less its panels), where the host knows it.
+    pub fn work_area(&self) -> Option<(f32, f32)> {
+        self.work_area
+    }
+}
+
+/// Where an overlay stands: its bottom centre, in the host's own measure of the screen
+/// (Windows' and X11's desktop pixels, Wayland's distances from its display's edges). It means
+/// nothing to the app: it is kept and handed back (`OverlayOptions::place`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub x: i32,
+    pub y: i32,
+}
+
+/// A window over every other one (desktop lyrics, a notice): no frame, no shadow, no taskbar
+/// entry, never activated, transparent where nothing paints (the tree's clear colour; set it
+/// transparent). It grows and shrinks about its bottom centre (`Window::set_size`), is moved by
+/// the user where the app answers `NcHit::Caption`, and can let the pointer through
+/// (`Window::set_click_through`). Opened with `run_overlay` or `spawn_overlay`.
+#[derive(Clone, Debug)]
+pub struct OverlayOptions {
+    pub title: String,
+    /// Its first size in dips.
+    pub width: f32,
+    pub height: f32,
+    /// A place an overlay reported before (`Window::place`); `None`, or one on no display now:
+    /// centred at the bottom of the main display's work area, `lift` of its height above it.
+    pub place: Option<Place>,
+    pub lift: f32,
+    /// It lets the pointer through from the start.
+    pub click_through: bool,
+    pub backend: BackendKind,
+}
+
+/// Runs the overlay `make` builds on a thread of its own (`novaui-overlay`) until it closes. The
+/// app reaches it as any other thread reaches a window: by a channel and the overlay's waker
+/// (`Ui::waker`), which `make` can hand out. `Err` when the thread could not start; the
+/// thread's result is the overlay's (`run_overlay`).
+pub fn spawn_overlay(
+    opts: OverlayOptions,
+    make: impl FnOnce(&mut crate::app::Ui) -> Box<dyn App> + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<Result<(), crate::Error>>> {
+    std::thread::Builder::new().name("novaui-overlay".into()).spawn(move || {
+        let result = run_overlay(opts, make);
+        if let Err(e) = &result {
+            eprintln!("novaui: overlay: {e}");
+        }
+        result
+    })
 }
 
 /// The window's 1-px edge where the system draws none (Windows 10, X11, Wayland): WinUI's dark
@@ -91,6 +171,9 @@ pub(crate) struct Requests {
     pub toggle_maximize: bool,
     pub fullscreen: Option<bool>,
     pub title: Option<String>,
+    /// An overlay's new size (dips).
+    pub size: Option<(f32, f32)>,
+    pub click_through: Option<bool>,
 }
 
 pub struct Options {
@@ -210,6 +293,16 @@ pub fn run(opts: Options, mut make: impl FnMut(&mut crate::app::Ui) -> Box<dyn A
         return Ok(());
     }
     x11::run(opts, make)
+}
+
+/// Opens an overlay (`OverlayOptions`) and runs `app` in it on this thread until it closes.
+#[cfg(target_os = "linux")]
+pub fn run_overlay(
+    opts: OverlayOptions,
+    make: impl FnOnce(&mut crate::app::Ui) -> Box<dyn App>,
+) -> Result<(), crate::Error> {
+    let _ = (opts, make);
+    Err(crate::Error::Platform("overlays are not made on this host yet".into()))
 }
 
 /// The refresh rate to pace turns and tickers by: what the display reports (Win32's display

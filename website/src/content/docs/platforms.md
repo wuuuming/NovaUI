@@ -43,5 +43,6 @@ follows the monitor's DPI.
 
 ## Not yet
 
-Accessibility (a semantics tree for UI Automation and AT-SPI), colour emoji, more than one
-window per process, HDR output, GLES and Metal backends, multi-line text, sliders, tables.
+Colour emoji, more than one main window per process (an app can open
+[overlays](/components/overlay/) beside it), HDR output on Vulkan, GLES and Metal backends,
+multi-line text, sliders, tables.

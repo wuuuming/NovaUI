@@ -22,7 +22,7 @@ const sidebar = [
   {
     label: 'Widgets',
     translations: { 'zh-CN': '部件' },
-    items: ['components/flyout', 'components/virtual-list', 'components/scrollbar', 'components/qr'],
+    items: ['components/flyout', 'components/virtual-list', 'components/scrollbar', 'components/qr', 'components/overlay'],
   },
   { label: 'Guides', translations: { 'zh-CN': '指南' }, items: ['icons', 'theming', 'platforms', 'performance', 'licence'] },
 ];

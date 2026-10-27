@@ -631,7 +631,9 @@ impl D3d11 {
     /// composition swap chain as its content. None of it needs the window, so this is the probe
     /// the window's style is chosen by (`WS_EX_NOREDIRECTIONBITMAP`, fixed at its creation): it
     /// fails where DirectComposition or `IDXGISwapChain2` is missing (RDP, VMs, old drivers).
-    pub fn compose(&mut self) -> windows::core::Result<()> {
+    /// `transparent`: the canvas's alpha (premultiplied, as it is drawn) shows what is under the
+    /// window (an overlay); else it is ignored.
+    pub fn compose(&mut self, transparent: bool) -> windows::core::Result<()> {
         // SAFETY: DXGI and DirectComposition calls on this thread with our device; `d` is a live
         // local; the latency handle is kept with the swap chain that owns it.
         unsafe {
@@ -651,7 +653,7 @@ impl D3d11 {
                 SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
                 // The only scaling a composition swap chain takes; `crop` undoes it.
                 Scaling: DXGI_SCALING_STRETCH,
-                AlphaMode: DXGI_ALPHA_MODE_IGNORE,
+                AlphaMode: if transparent { DXGI_ALPHA_MODE_PREMULTIPLIED } else { DXGI_ALPHA_MODE_IGNORE },
                 Flags: DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT.0 as u32,
                 ..Default::default()
             };

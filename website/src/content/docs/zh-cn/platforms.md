@@ -37,4 +37,4 @@ GPU 只有一份 WGSL 着色器源码；naga 把它翻译成 D3D11 的 HLSL 和 
 
 ## 还没有的
 
-无障碍（给 UI Automation 和 AT-SPI 的语义树）、彩色 emoji、一个进程多个窗口、HDR 输出、GLES 和 Metal 后端、多行文本、滑块、表格。
+彩色 emoji、一个进程多个主窗口（应用可以在旁边打开[浮层](/zh-cn/components/overlay/)）、Vulkan 上的 HDR 输出、GLES 和 Metal 后端、多行文本、滑块、表格。

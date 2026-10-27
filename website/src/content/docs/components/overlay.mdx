@@ -1,0 +1,29 @@
+---
+title: Overlay
+description: A window over every other one, transparent where nothing paints.
+---
+import Shot from '../../../components/Shot.astro';
+import Recipe from '../../../components/Recipe.astro';
+
+<Shot name="overlay" alt="A dark plate with one line of white text, and above it a small bar with a lock and a close button." />
+
+An overlay (desktop lyrics, a notice) is a window of its own, opened with
+`platform::run_overlay` on the calling thread or `platform::spawn_overlay` on a thread of its
+own. It runs an `App` like any window, with its own turn, tree and timers. It has no frame,
+shadow or taskbar entry, never takes the keyboard, and stays over the other windows.
+
+1. The app sets the tree's clear colour transparent (`Tree::set_clear`): the window shows only
+   what it paints.
+2. It sizes the window after layout (`Window::set_size`), here to `#content`, laid out on a
+   stage that does not depend on the window's size. The window grows and shrinks about its
+   bottom centre.
+3. Where `nc_hit` answers `NcHit::Caption` the user drags it. `Window::place` is where it
+   stands and `Event::Moved` says it moved: keep it and pass it back in `OverlayOptions::place`
+   the next time.
+4. `Window::set_click_through(true)` lets presses through to what is under it. The pointer
+   still comes and goes over it (hover), so the plate can fade while it is over it.
+
+Another thread talks to an overlay as to any window: by a channel, and the overlay's waker
+(`Ui::waker`) handed out by the closure that makes its app.
+
+<Recipe name="overlay" />

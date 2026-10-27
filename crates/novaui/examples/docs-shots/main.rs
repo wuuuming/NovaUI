@@ -49,6 +49,9 @@ mod docs_list;
 #[path = "../docs_material.rs"]
 mod docs_material;
 #[allow(dead_code)]
+#[path = "../docs_overlay.rs"]
+mod docs_overlay;
+#[allow(dead_code)]
 #[path = "../docs_path.rs"]
 mod docs_path;
 #[allow(dead_code)]
@@ -112,6 +115,16 @@ fn shots() -> Vec<Shot> {
         },
         Shot { name: "qr", size: (520, 224), make: |ui| Box::new(docs_qr::Demo::new(ui)), input: None },
         Shot { name: "theme", size: (696, 184), make: |ui| Box::new(docs_theme::Demo::new(ui)), input: None },
+        Shot {
+            name: "overlay",
+            size: (520, 120),
+            make: |ui| Box::new(docs_overlay::Demo::new(ui)),
+            // Shown over a desktop's colour: the window itself is transparent.
+            input: Some(|ui, app| {
+                ui.tree.set_clear([0.36, 0.45, 0.56, 1.0]);
+                hover(ui, app, 260.0, 90.0)
+            }),
+        },
         Shot { name: "material", size: (792, 318), make: |ui| Box::new(docs_material::Demo::new(ui)), input: None },
     ]
 }
@@ -146,7 +159,6 @@ fn wheel(ui: &mut Ui, app: &mut dyn App, x: f32, y: f32, notches: f32) {
 }
 
 /// Moves the pointer to (x, y) dips (a hover).
-#[allow(dead_code)]
 fn hover(ui: &mut Ui, app: &mut dyn App, x: f32, y: f32) {
     ui.input(Input::Move(px(x), px(y)));
     turn(app, ui);

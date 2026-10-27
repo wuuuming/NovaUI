@@ -39,7 +39,9 @@ the GPU backends' image maker `novaui-images` (textures of ≥ 256² made off th
 on its free-threaded device, Vulkan the image and a filled staging buffer); on Windows, during the
 modal size/move loop, the vblank thread (`platform/win32_vblank.rs`) that posts one message per
 refresh. A task that waits rather than computes (`Ui::spawn_waiting`; on Linux a file picker,
-`kdialog`/`zenity`, a child process) runs on a `novaui-wait` thread of its own.
+`kdialog`/`zenity`, a child process) runs on a `novaui-wait` thread of its own. An overlay
+(`spawn_overlay`) is a UI thread of its own, `novaui-overlay`: its host loop, `Ui` and `Tree`,
+with its own workers; the per-window state of the hosts is per thread.
 
 ## 2. Flows
 
@@ -138,8 +140,9 @@ elements on an evicted page repaint (`take_stale`); a full reset when nothing ca
 | `render/primitive.rs` | `Prim`, `Draw`, `Target`, `Backend` trait, Kawase sizes |
 | `render/batch.rs` | the renderer's shader as built (`HLSL`, `spirv`), instance encoding shared by D3D11 and Vulkan |
 | `render/d3d11.rs`, `vulkan.rs`, `software.rs` | the three backends |
-| `platform/mod.rs` | `Window` and its requests, `Options`, `run` (Linux: Wayland, else X11) |
+| `platform/mod.rs` | `Window` and its requests, `Options`, `run` (Linux: Wayland, else X11); `OverlayOptions`, `Place`, `run_overlay`, `spawn_overlay` |
 | `platform/win32.rs` (+`win32_vblank.rs`, `window_state.rs`) | Win32 host, file dialogs, clipboard, locale |
+| `platform/win32_overlay.rs` | Win32 overlays: the window, its place about its bottom centre, click-through and the pointer hook |
 | `platform/win32_hdr.rs` | the window's output, HDR or SDR: SDR white and peak (`Backend::set_output`) |
 | `platform/wayland.rs` | Wayland host (Vulkan only; falls back to X11 when it cannot open); input methods through `zwp_text_input_v3` |
 | `platform/x11.rs` | X11 host (Vulkan or software `XPutImage`) |
@@ -193,7 +196,8 @@ what a mechanism lives as long as; thread is where it runs.
 | Theme tokens | `theme.rs` | the process | colours, sizes, type ramp, shadows, materials by name | a token |
 | Strings | `i18n.rs` | the process | locale, fallback, prefixed tables per plugin | a key |
 | Trace and audit | `trace.rs`, `audit.rs`, `FrameStats` | the process · UI | turn and frame costs, stalls, contracts | — |
-| Host window requests | `platform/mod.rs` `Window`/`Requests`; each host | the window · UI | close, minimise, maximise, fullscreen, title | a request |
+| Host window requests | `platform/mod.rs` `Window`/`Requests`; each host | the window · UI | close, minimise, maximise, fullscreen, title; an overlay's size and click-through | a request |
+| Overlay | `platform::run_overlay` / `spawn_overlay`, each host's overlay window | the overlay · its own thread (`novaui-overlay`) | a window over the others: transparent, never activated, sized by the app about its bottom centre, moved by its caption, its place kept by the app (`Place`, `Event::Moved`), click-through with hover | an `App`, `OverlayOptions` |
 | Host clipboard | `Ui::io` `clipboard_out`/`paste_wanted`, `clipboard_read`; each host | the window · UI | a field's copy, cut, paste; the app's reads share the read | text |
 | App clipboard and pickers | `Ui::read_clipboard`, `Ui::pick` (`FilePick`); `HostIo`, each host's read, `serve_picks` | a request · UI → host (Linux pickers: a `novaui-wait` thread) | the app's paste, file choice: answered as the app's message, never waited for | a message |
 | Locale | `platform::locale` | a call · UI | the user's language | — |

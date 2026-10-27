@@ -159,6 +159,8 @@ pub enum Event {
     /// it to its own message type.
     Message(crate::sched::Message),
     Resized,
+    /// An overlay was moved (`Window::place` is where it is now).
+    Moved,
     WindowFocus(bool),
 }
 

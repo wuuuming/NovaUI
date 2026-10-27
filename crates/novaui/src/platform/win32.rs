@@ -3,7 +3,7 @@
 //! work, frame pacing on the swap chain's latency object, input translation, IME placement,
 //! drag-and-drop, file dialogs and a cross-thread waker.
 
-use super::{App, Options};
+use super::{App, Options, OverlayOptions};
 use crate::app::{NcHit, Ui};
 use crate::input::{Input, Mods, MouseButton};
 use crate::render::primitive::Backend;
@@ -28,6 +28,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 #[cfg(test)]
 #[path = "win32_capture_tests.rs"]
 mod capture_tests;
+#[path = "win32_overlay.rs"]
+mod overlay;
 #[path = "win32_vblank.rs"]
 pub(super) mod vblank;
 #[path = "window_state.rs"]
@@ -77,6 +79,8 @@ enum Msg {
     Paint,
     /// The modal size/move loop ended.
     SizeMoveEnd,
+    /// The window moved.
+    Moved,
     Wake,
     Quit,
 }
@@ -143,8 +147,21 @@ thread_local! {
     static IN_SIZEMOVE: Cell<bool> = const { Cell::new(false) };
     /// The window is fullscreen (borderless over its monitor): no frame inset, no resize border.
     static FULLSCREEN: Cell<bool> = const { Cell::new(false) };
-    /// The pointer's leaving is tracked (`TrackMouseEvent`).
+    /// The pointer's leaving is tracked (`TrackMouseEvent`), over the client and the caption.
     static TRACKING: Cell<bool> = const { Cell::new(false) };
+    static NC_TRACKING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Asks for the pointer's leave message (`flags`: the client's or the caption's).
+fn track_leave(hwnd: HWND, flags: TRACKMOUSEEVENT_FLAGS) {
+    let mut t = TRACKMOUSEEVENT {
+        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+        dwFlags: flags,
+        hwndTrack: hwnd,
+        dwHoverTime: 0,
+    };
+    // SAFETY: `t` is a live local with its size set; Windows copies it.
+    let _ = unsafe { TrackMouseEvent(&mut t) };
 }
 
 fn mods() -> Mods {
@@ -245,7 +262,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 return LRESULT(HTCLIENT as isize);
             }
             let b = frame_thickness(hwnd);
-            if !is_zoomed(hwnd) && !FULLSCREEN.with(Cell::get) {
+            let bordered = !is_zoomed(hwnd) && !FULLSCREEN.with(Cell::get) && !overlay::OVERLAY.with(Cell::get);
+            if bordered {
                 use super::FrameBorder as B;
                 if let Some(part) = B::at(pt.x, pt.y, rc.right, rc.bottom, b) {
                     let code = match part {
@@ -270,10 +288,16 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 NcHit::Minimize | NcHit::Close => HTCLIENT,
             } as isize);
         }
-        WM_NCMOUSEMOVE if wp.0 == HTMAXBUTTON as usize => {
+        // Over the caption the pointer moves as over the rest (hover), as on the Linux hosts.
+        WM_NCMOUSEMOVE if wp.0 == HTMAXBUTTON as usize || wp.0 == HTCAPTION as usize => {
+            if !NC_TRACKING.with(|v| v.replace(true)) {
+                track_leave(hwnd, TME_LEAVE | TME_NONCLIENT);
+            }
             let pt = to_client(hwnd, lp);
             push(Msg::In(Input::Move(pt.x, pt.y)));
-            return LRESULT(0);
+            if wp.0 == HTMAXBUTTON as usize {
+                return LRESULT(0);
+            }
         }
         WM_NCLBUTTONDOWN if wp.0 == HTMAXBUTTON as usize => {
             let pt = to_client(hwnd, lp);
@@ -285,7 +309,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             push(Msg::In(Input::Up(pt.x, pt.y, MouseButton::Left)));
             return LRESULT(0);
         }
-        WM_NCMOUSELEAVE => push(Msg::In(Input::Leave)),
+        WM_NCMOUSELEAVE => {
+            NC_TRACKING.with(|v| v.set(false));
+            // From the caption into the client the pointer has not left.
+            if !overlay::pointer_inside(hwnd) {
+                push(Msg::In(Input::Leave));
+            }
+        }
+        // An overlay is never activated, not even by a press.
+        WM_MOUSEACTIVATE if overlay::OVERLAY.with(Cell::get) => return LRESULT(MA_NOACTIVATE as isize),
         // A press on the caption is the app's first, an ordinary press (it closes a flyout,
         // drops focus), and is handled before Windows' move loop, which is modal and returns
         // on the release: a drag (snap included) or a plain click. The release is the app's
@@ -312,7 +344,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 Input::Up(pt.x, pt.y, MouseButton::Right)
             }));
             step_now();
-            if !down {
+            if !down && !overlay::OVERLAY.with(Cell::get) {
                 let (sx, sy) = xy(lp);
                 show_system_menu(hwnd, sx, sy);
             }
@@ -377,14 +409,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         }
         WM_MOUSEMOVE => {
             if !TRACKING.with(|v| v.replace(true)) {
-                let mut t = TRACKMOUSEEVENT {
-                    cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-                    dwFlags: TME_LEAVE,
-                    hwndTrack: hwnd,
-                    dwHoverTime: 0,
-                };
-                // SAFETY: `t` is a live local with its size set; Windows copies it.
-                let _ = unsafe { TrackMouseEvent(&mut t) };
+                track_leave(hwnd, TME_LEAVE);
             }
             let (x, y) = xy(lp);
             push(Msg::In(Input::Move(x, y)));
@@ -399,8 +424,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         }
         WM_MOUSELEAVE => {
             TRACKING.with(|v| v.set(false));
-            push(Msg::In(Input::Leave));
+            // From the client onto the caption the pointer has not left.
+            if !overlay::pointer_inside(hwnd) {
+                push(Msg::In(Input::Leave));
+            }
         }
+        WM_MOVE => push(Msg::Moved),
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
             let (x, y) = xy(lp);
             // SAFETY: a handle, on the window's thread.
@@ -632,6 +661,9 @@ pub struct Host {
     output_check: bool,
     /// The window's accessibility tree (UI Automation through `ACCESS`), when the app asked for it.
     access: Option<crate::access::Bridge>,
+    /// The window is an overlay (`OverlayOptions`): it is sized by the app, keeps its place, can
+    /// let the pointer through, and draws SDR with alpha.
+    overlay: bool,
 }
 
 thread_local! {
@@ -688,7 +720,7 @@ fn client(hwnd: HWND) -> (i32, i32) {
 /// window to a swap chain of its own. Probed by trying, never by OS version, so RDP, VMs and
 /// broken drivers fall back too. `NOVAUI_PRESENT=flip` forces the fallback,
 /// `NOVAUI_PRESENT=composition` (the default) asks for this.
-fn composed(kind: super::BackendKind) -> Option<crate::render::d3d11::D3d11> {
+fn composed(kind: super::BackendKind, transparent: bool) -> Option<crate::render::d3d11::D3d11> {
     match std::env::var("NOVAUI_PRESENT").ok().as_deref() {
         None | Some("") | Some("composition") => {}
         Some("flip") => return None,
@@ -698,7 +730,7 @@ fn composed(kind: super::BackendKind) -> Option<crate::render::d3d11::D3d11> {
         return None;
     }
     let mut d = crate::render::d3d11::D3d11::new(1, 1).ok()?;
-    match d.compose() {
+    match d.compose(transparent) {
         Ok(()) => Some(d),
         Err(e) => {
             eprintln!("novaui: no DirectComposition ({e}); presenting through the window");
@@ -836,32 +868,65 @@ fn mark_fullscreen(hwnd: HWND, on: bool) {
 
 /// Opens the window and runs `app` until the window closes. `Err` when no window could be had,
 /// or no font loads.
-pub fn run(opts: Options, mut make: impl FnMut(&mut Ui) -> Box<dyn App>) -> Result<(), crate::Error> {
+pub fn run(opts: Options, make: impl FnMut(&mut Ui) -> Box<dyn App>) -> Result<(), crate::Error> {
     crate::text::check_fonts()?;
-    let pre = composed(opts.backend);
+    let pre = composed(opts.backend, false);
     let composition = pre.is_some();
     let hwnd = open_window(&opts, composition).map_err(crate::Error::Platform)?;
+    let accessibility = opts.accessibility.then_some(opts.title);
+    host_loop(Made { hwnd, pre, backend: opts.backend, accessibility, place: None }, make)
+}
+
+/// Opens an overlay (`OverlayOptions`) and runs `app` in it on this thread until it closes.
+/// `Err` when it could not be had (it needs DirectComposition to be transparent), or no font
+/// loads.
+pub fn run_overlay(opts: OverlayOptions, make: impl FnOnce(&mut Ui) -> Box<dyn App>) -> Result<(), crate::Error> {
+    crate::text::check_fonts()?;
+    let no_alpha = || crate::Error::Platform("an overlay needs DirectComposition (a transparent window)".into());
+    let pre = composed(opts.backend, true).ok_or_else(no_alpha)?;
+    let (hwnd, place) = overlay::open(&opts).map_err(crate::Error::Platform)?;
+    let made = Made { hwnd, pre: Some(pre), backend: opts.backend, accessibility: None, place: Some(place) };
+    let result = host_loop(made, make);
+    overlay::unhook();
+    result
+}
+
+/// A window made and what its host is to be: its backend made beforehand, the title its
+/// accessibility tree is named by (none: no tree), an overlay's place.
+struct Made {
+    hwnd: HWND,
+    pre: Option<crate::render::d3d11::D3d11>,
+    backend: super::BackendKind,
+    accessibility: Option<String>,
+    place: Option<super::Place>,
+}
+
+/// Runs the app in a window made (`run`, `run_overlay`) until it closes.
+fn host_loop(made: Made, make: impl FnOnce(&mut Ui) -> Box<dyn App>) -> Result<(), crate::Error> {
+    let Made { hwnd, pre, backend, accessibility, place } = made;
+    let overlay = place.is_some();
+    let composition = pre.is_some();
     let (cw, ch) = client(hwnd);
     let scale = scale_of(hwnd);
 
-    let be = make_backend(opts.backend, hwnd, cw, ch, pre);
+    let be = make_backend(backend, hwnd, cw, ch, pre);
     let pending = Arc::new(AtomicBool::new(false));
     let waker = HostWake { hwnd: Arc::new(AtomicIsize::new(hwnd.0 as isize)), pending: pending.clone() };
     let task_waker = waker.clone();
     let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || task_waker.wake());
     // UI Automation is set up before the window can be asked for it (never inside
     // `WM_GETOBJECT`, AccessKit's rule); no tree is built until a client asks.
-    let access = opts.accessibility.then(|| {
+    let access = accessibility.map(|title| {
         let shared = crate::access::Shared::new(wake.clone());
         let hwnd = accesskit_windows::HWND(hwnd.0);
         let adapter = accesskit_windows::Adapter::new(hwnd, false, crate::access::Handler(shared.clone()));
         ACCESS.with(|a| *a.borrow_mut() = Some((adapter, crate::access::Handler(shared.clone()))));
-        crate::access::Bridge::new(shared, Box::new(UiaAccess), opts.title.clone())
+        crate::access::Bridge::new(shared, Box::new(UiaAccess), title)
     });
     let mut host = Host {
         hwnd,
         be,
-        backend: opts.backend,
+        backend,
         composition,
         t0: Instant::now(),
         pending,
@@ -872,19 +937,27 @@ pub fn run(opts: Options, mut make: impl FnMut(&mut Ui) -> Box<dyn App>) -> Resu
         resizing: false,
         outputs: Default::default(),
         hdr: None,
-        output_check: true,
+        // An overlay draws SDR: its alpha is the composition's.
+        output_check: !overlay,
         access,
+        overlay,
     };
     let mut ui = Ui::new(cw, ch, scale);
     ui.window.handle = hwnd.0 as isize;
+    ui.window.place = place;
+    ui.window.work_area = overlay::work_area(hwnd);
     ui.set_task_wake(wake);
 
     let mut app = make(&mut ui);
     // First frame before showing: no white flash.
     runner::start(&mut host, &mut ui, app.as_mut());
 
-    // SAFETY: a handle and a plain value.
-    let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
+    if overlay {
+        overlay::show(hwnd);
+    } else {
+        // SAFETY: a handle and a plain value.
+        let _ = unsafe { ShowWindow(hwnd, SW_SHOW) };
+    }
     RUNNER.with(|r| *r.borrow_mut() = Some(Runner { host, ui, app, pacer: Pacer::new(refresh_hz(hwnd)) }));
 
     let mut quit = false;
@@ -1085,7 +1158,7 @@ impl runner::Host for Host {
             match m {
                 Msg::In(i) => {
                     // Activated: the SDR white may have changed meanwhile (Settings sends nothing).
-                    self.output_check |= matches!(i, Input::Focus(true));
+                    self.output_check |= !self.overlay && matches!(i, Input::Focus(true));
                     ui.input(i)
                 }
                 Msg::Size(w, h, kind) => match self.window_state.resize(kind, w, h) {
@@ -1104,6 +1177,15 @@ impl runner::Host for Host {
                 Msg::DisplayChanged => display_changed = true,
                 Msg::Paint => ui.tree.expose(),
                 Msg::SizeMoveEnd => ui.tree.resize_ended(runner::Host::now(self)),
+                Msg::Moved => {
+                    if self.overlay {
+                        let place = Some(overlay::place(hwnd));
+                        if place != ui.window.place {
+                            ui.window.place = place;
+                            ui.events.push(crate::Event::Moved);
+                        }
+                    }
+                }
                 Msg::Wake => {
                     super::woken(&self.pending, ui);
                 }
@@ -1131,7 +1213,8 @@ impl runner::Host for Host {
         if display_changed || monitor != self.refresh_monitor {
             pacer.set_hz(refresh_hz(hwnd));
             self.refresh_monitor = monitor;
-            self.output_check = true;
+            self.output_check = !self.overlay;
+            ui.window.work_area = overlay::work_area(hwnd);
         }
         // HDR or SDR: the backend draws for the output the window is on now.
         if std::mem::take(&mut self.output_check) || self.outputs.stale() {
@@ -1164,6 +1247,13 @@ impl runner::Host for Host {
         if let Some(f) = req.fullscreen {
             self.set_fullscreen(f);
             ui.window.fullscreen = f;
+        }
+        if let (Some((w, h)), true) = (req.size, self.overlay) {
+            let k = scale_of(hwnd);
+            overlay::set_size(hwnd, (w * k).round() as i32, (h * k).round() as i32);
+        }
+        if let (Some(on), true) = (req.click_through, self.overlay) {
+            overlay::set_click_through(hwnd, on);
         }
         if let Some(t) = req.title {
             if let Some(a) = &mut self.access {
@@ -1229,7 +1319,7 @@ impl runner::Host for Host {
 
     /// Windows 10 draws no edge on a frameless window; Windows 11 draws its own (DWM).
     fn edge(&self, ui: &Ui) -> Option<crate::geom::Color> {
-        let edge = !WIN11.load(Ordering::Relaxed) && ui.window.framed();
+        let edge = !WIN11.load(Ordering::Relaxed) && ui.window.framed() && !self.overlay;
         edge.then_some(super::FRAME_EDGE)
     }
 
@@ -1268,7 +1358,7 @@ impl runner::Host for Host {
         let (w, h) = client(self.hwnd);
         // Its composition target holds the window, which takes one.
         runner::replace_backend(&mut self.be, || {
-            let pre = if self.composition { composed(self.backend) } else { None };
+            let pre = if self.composition { composed(self.backend, self.overlay) } else { None };
             Some(make_backend(self.backend, self.hwnd, w, h, pre))
         });
         // The new backend starts SDR; the runner has everything drawn again after this.

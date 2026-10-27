@@ -1,0 +1,20 @@
+// An overlay's look: a plate that fits its line, over nothing (the window is transparent where
+// nothing paints). `#content` takes its own size on a stage of fixed width, not the window's:
+// the window is then sized to it (`after_layout`), and grows about its bottom centre.
+style Button { width: 28; height: 28; radius: 4; bg-hover: #33FFFFFF; bg-press: #1FFFFFFF; }
+style Icon { icon-size: 14; fg: white; }
+
+Box #root { width: 100%; height: 100%;
+  Column #stage { position: absolute; left: window.w / 2 - 400; width: 800; bottom: 0; align: center;
+    Column #content { align: center; gap: 6; hit: true; hover-events: true;
+      // Hovering shows the buttons.
+      Row #bar { height: 32; padding: 0, 2; gap: 2; radius: 6; bg: #99000000; align: center; opacity: $bar;
+        Button #lock { on-click: lock; Icon LockClosed; }
+        Button #close { on-click: close; Icon Dismiss; }
+      }
+      Box #plate { padding: 10, 30; radius: 15; bg: #99000000;
+        Text #line { text: $line; font-size: 30; line: 40; weight: 600; fg: white; }
+      }
+    }
+  }
+}

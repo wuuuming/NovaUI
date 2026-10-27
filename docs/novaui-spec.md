@@ -36,7 +36,7 @@ frames.
 | `widgets` | `TextEdit` (`text_field`), `Flyout`, `VirtualList` (`list`), `Scrollbar` (`scroll`), `switch`, `qr` | what a row shows |
 | `error` (re-exported) | `Error`: what a fallible call returns (`Parse { line, msg }`, `Platform`); a broken invariant inside novaui is a `debug_assert!`, not an `Error` | how the app reports it |
 | `trace` | `NOVAUI_TRACE` runtime counters (`runtime.md` §9) | — |
-| `platform` | `Window` (handle, state, requests), `run`, `open` (a URL or a path, with the system's opener, off the UI thread), `locale`, per OS: window, custom caption, DPI, event loop, frame pacing, drag-drop, file pickers, clipboard | tree semantics |
+| `platform` | `Window` (handle, state, requests), `run`, overlays (`run_overlay`, `spawn_overlay`, §7.2), `open` (a URL or a path, with the system's opener, off the UI thread), `locale`, per OS: window, custom caption, DPI, event loop, frame pacing, drag-drop, file pickers, clipboard | tree semantics |
 
 Crate-private: `render` (`primitive` — the closed primitive set and `Backend`; `batch` — instances
 and batches for the GPU backends; `software`, `vulkan`, `d3d11`), `runner` (the turn), `vector`
@@ -465,7 +465,9 @@ actions follow, the same on every host, as GTK4 (`GtkWindowHandle`) and Chromium
 | Right-click | the system menu, opened by the host (`GetSystemMenu` + `TrackPopupMenu`): with the frame drawn by the app, `DefWindowProc` opens none | `_GTK_SHOW_WINDOW_MENU` when the WM lists it in `_NET_SUPPORTED` (KWin, Mutter, Xfwm) | `xdg_toplevel.show_window_menu` |
 
 The app sees the drag's press end (`Input::Up`) before the window manager takes the pointer, so
-nothing is left held.
+nothing is left held. The pointer moves over the caption as over the rest of the window (hover):
+Win32 sends its non-client moves as `Input::Move` and a leave only when the pointer is off the
+window, not when it crosses from the caption to the client.
 
 ## 6d Window edge and shadow per platform
 
@@ -534,6 +536,37 @@ When the user drags the border, Win32 runs its own modal loop inside `DefWindowP
   free-threaded): such an image shows from the frame after the one that first drew it. Smaller
   ones are made at once.
 
+### 7.2 Overlays
+
+An overlay (`platform::OverlayOptions`; `run_overlay` on the calling thread, `spawn_overlay` on a
+thread of its own, `novaui-overlay`) is a window over every other one: desktop lyrics, a notice.
+It runs the same `App` and `Ui` as a main window, with its own turn, tree and scheduler on its
+thread; another thread reaches it by a channel and its waker. It has no frame, no shadow and no
+taskbar entry, is never activated (it never takes the keyboard), and is transparent where nothing
+paints: the app sets the tree's clear colour transparent (`Tree::set_clear`), and the canvas's
+premultiplied alpha is what the system composes.
+
+- **Size and place.** The app sizes it (`Window::set_size`, dips), usually to its content's
+  laid-out box after layout (the content laid out on a stage that does not depend on the
+  window's size). It grows and shrinks about its bottom centre. Its place (`Place`, the bottom
+  centre in the host's own measure) is `Window::place`; `Event::Moved` says the user moved it.
+  The app keeps the place and hands it back (`OverlayOptions::place`); a place on no display,
+  or none, opens it centred at the bottom of the main display's work area, `lift` of its height
+  up. `Window::work_area` is the work area of its display, in dips.
+- **Moving.** Where the app answers `NcHit::Caption` the user drags it, as a main window's
+  caption; there is no resize border, no maximize and no window menu.
+- **Click-through.** `Window::set_click_through(true)` lets presses through to what is under it;
+  the pointer coming and going over it still arrives as `Input::Move` / `Input::Leave`, so hover
+  works.
+
+| Host | Window | Transparent | Click-through, and hover while it is on |
+|---|---|---|---|
+| Win32 | `WS_POPUP` with `WS_EX_TOPMOST`, `WS_EX_TOOLWINDOW`, `WS_EX_NOACTIVATE` (and `MA_NOACTIVATE`), `WS_EX_LAYERED`; DWM's corners, border and transitions off | DirectComposition only: a composition swap chain with `DXGI_ALPHA_MODE_PREMULTIPLIED` (no composition, no overlay: `run_overlay` fails) | `WS_EX_TRANSPARENT`; a low-level mouse hook (`WH_MOUSE_LL`) on its thread checks the pointer against the window's rectangle |
+| X11 | not yet | | |
+| Wayland | not yet | | |
+
+An overlay draws SDR (no HDR output) and has no accessibility tree.
+
 ## 8 Environment switches
 
 | Variable | Effect |
@@ -557,6 +590,6 @@ Compared with mature toolkits (GPUI, egui, Flutter, browsers), these are not the
 | Text | shaping (harfrust), bidi, UAX #14 breaking, greedy | colour emoji; dictionary breaking for Thai, Lao, Khmer (they break at spaces); vertical text; justification |
 | Input method | inline on Win32, Wayland (`text-input-v3`) and X11 (XIM) | surrounding text (reconversion), a status window |
 | Tooling | `NOVAUI_TRACE`, screenshot tests, inspector and live `.nui` reload (debug builds) | a layout overlay (flex lines, padding) |
-| Windows | one window per process | multi-window, popups as OS windows |
+| Windows | one main window per process, and overlays on threads of their own (§7.2) | more main windows, popups as OS windows |
 | Output | SDR; HDR on Windows through D3D11 (§6b.1), gain-map JPEG images | HDR on Vulkan (Linux needs a compositor with colour management, KWin 6); AVIF and ISO 21496-1 gain maps; GLES / Metal backends |
 | Widgets | single-line field, flyout, list, scrollbar, QR | multi-line text, slider, table / tree |

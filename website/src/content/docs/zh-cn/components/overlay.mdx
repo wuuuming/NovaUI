@@ -1,0 +1,25 @@
+---
+title: Overlay
+description: 浮在所有窗口之上、不绘制的地方透明的窗口。
+---
+import Shot from '../../../../components/Shot.astro';
+import Recipe from '../../../../components/Recipe.astro';
+
+<Shot name="overlay" alt="一块深色底板上有一行白字，上方是一条带锁和关闭按钮的小工具栏。" />
+
+浮层（桌面歌词、提示）是一个独立的窗口：用 `platform::run_overlay` 在当前线程打开，或用
+`platform::spawn_overlay` 在它自己的线程上打开。它和普通窗口一样运行一个 `App`，有自己的回合、
+元素树和计时器。它没有边框、阴影和任务栏按钮，从不获得键盘，始终在其他窗口之上。
+
+1. 应用把元素树的清除色设为透明（`Tree::set_clear`）：窗口只显示它绘制的内容。
+2. 布局之后由应用设定窗口大小（`Window::set_size`），这里取 `#content` 的大小；它布局在一个不随
+   窗口大小变化的舞台上。窗口以底边中点为基准变大变小。
+3. `nc_hit` 返回 `NcHit::Caption` 的地方可以拖动它。`Window::place` 是它所在的位置，
+   `Event::Moved` 表示它被移动了：保存下来，下次通过 `OverlayOptions::place` 传回。
+4. `Window::set_click_through(true)` 让按下穿透到下面的窗口。指针经过它时仍然有进出（悬停），
+   所以底板可以在指针经过时变淡。
+
+其他线程和浮层通信的方式与任何窗口相同：一个通道，加上创建应用的闭包交出来的浮层唤醒器
+（`Ui::waker`）。
+
+<Recipe name="overlay" />
