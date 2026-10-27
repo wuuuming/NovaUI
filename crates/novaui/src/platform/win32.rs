@@ -9,7 +9,7 @@ use crate::input::{Input, Mods, MouseButton};
 use crate::render::primitive::Backend;
 use crate::runner::{self, Pacer};
 use crate::style::Cursor;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::Arc;
@@ -136,10 +136,16 @@ thread_local! {
     static VBLANK: RefCell<Option<vblank::Vblank>> = const { RefCell::new(None) };
 }
 
-/// Inside Win32's modal size/move loop.
-static IN_SIZEMOVE: AtomicBool = AtomicBool::new(false);
-/// The window is fullscreen (borderless over its monitor): no frame inset, no resize border.
-static FULLSCREEN: AtomicBool = AtomicBool::new(false);
+// The window's own state, per thread: each window runs on a thread of its own (an overlay
+// beside the main window), and its procedure reads only its own.
+thread_local! {
+    /// Inside Win32's modal size/move loop.
+    static IN_SIZEMOVE: Cell<bool> = const { Cell::new(false) };
+    /// The window is fullscreen (borderless over its monitor): no frame inset, no resize border.
+    static FULLSCREEN: Cell<bool> = const { Cell::new(false) };
+    /// The pointer's leaving is tracked (`TrackMouseEvent`).
+    static TRACKING: Cell<bool> = const { Cell::new(false) };
+}
 
 fn mods() -> Mods {
     // SAFETY: plain values; reads this thread's keyboard state.
@@ -156,7 +162,6 @@ fn xy(lp: LPARAM) -> (i32, i32) {
     ((lp.0 & 0xffff) as i16 as i32, ((lp.0 >> 16) & 0xffff) as i16 as i32)
 }
 
-static TRACKING: AtomicBool = AtomicBool::new(false);
 /// DWM accepted the Windows 11 corner and border attributes.
 static WIN11: AtomicBool = AtomicBool::new(false);
 
@@ -213,7 +218,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             // The client area is the whole window. When maximised, Windows positions the
             // window beyond the monitor by the frame thickness: inset by it.
             // Fullscreen covers the monitor exactly (rcMonitor): nothing lies off it.
-            if is_zoomed(hwnd) && !FULLSCREEN.load(Ordering::Relaxed) {
+            if is_zoomed(hwnd) && !FULLSCREEN.with(Cell::get) {
                 let f = frame_thickness(hwnd);
                 // SAFETY: with wParam TRUE, `lp` points at Windows' NCCALCSIZE_PARAMS for this
                 // call, ours to change until we return; no other reference to it exists.
@@ -240,7 +245,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 return LRESULT(HTCLIENT as isize);
             }
             let b = frame_thickness(hwnd);
-            if !is_zoomed(hwnd) && !FULLSCREEN.load(Ordering::Relaxed) {
+            if !is_zoomed(hwnd) && !FULLSCREEN.with(Cell::get) {
                 use super::FrameBorder as B;
                 if let Some(part) = B::at(pt.x, pt.y, rc.right, rc.bottom, b) {
                     let code = match part {
@@ -353,25 +358,25 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         // refresh keeps animations, playback and wakes going (`vblank`; a window timer would
         // tick on the system's ~15.6 ms clock instead).
         WM_ENTERSIZEMOVE => {
-            IN_SIZEMOVE.store(true, Ordering::Relaxed);
+            IN_SIZEMOVE.with(|v| v.set(true));
             let period = RUNNER.with(|r| r.try_borrow().ok()?.as_ref().map(|r| r.pacer.period)).unwrap_or(1.0 / 60.0);
             let thread = vblank::Vblank::start(hwnd, monitor_of(hwnd), period);
             VBLANK.with(|v| *v.borrow_mut() = Some(thread));
         }
         WM_EXITSIZEMOVE => {
-            IN_SIZEMOVE.store(false, Ordering::Relaxed);
+            IN_SIZEMOVE.with(|v| v.set(false));
             push(Msg::SizeMoveEnd);
             VBLANK.with(|v| v.borrow_mut().take());
         }
         vblank::WM_APP_VBLANK => {
             VBLANK.with(|v| v.borrow().as_ref().map(vblank::Vblank::handled));
-            if IN_SIZEMOVE.load(Ordering::Relaxed) {
+            if IN_SIZEMOVE.with(Cell::get) {
                 step_now();
             }
             return LRESULT(0);
         }
         WM_MOUSEMOVE => {
-            if !TRACKING.swap(true, Ordering::Relaxed) {
+            if !TRACKING.with(|v| v.replace(true)) {
                 let mut t = TRACKMOUSEEVENT {
                     cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
                     dwFlags: TME_LEAVE,
@@ -393,7 +398,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             }
         }
         WM_MOUSELEAVE => {
-            TRACKING.store(false, Ordering::Relaxed);
+            TRACKING.with(|v| v.set(false));
             push(Msg::In(Input::Leave));
         }
         WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN => {
@@ -758,7 +763,7 @@ impl Host {
                 let mon = monitor_of(hwnd);
                 let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
                 let _ = GetMonitorInfoW(mon, &mut mi);
-                FULLSCREEN.store(true, Ordering::Relaxed);
+                FULLSCREEN.with(|v| v.set(true));
                 let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
                 // WS_MAXIMIZE off with the frame: the window is now a plain popup-sized one.
                 SetWindowLongW(hwnd, GWL_STYLE, (style.0 & !(WS_OVERLAPPEDWINDOW.0 | WS_MAXIMIZE.0)) as i32);
@@ -782,7 +787,7 @@ impl Host {
                     let suppress_zoom = p.showCmd == SW_SHOWMAXIMIZED.0 as u32
                         && DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &disabled as *const _ as _, 4)
                             .is_ok();
-                    FULLSCREEN.store(false, Ordering::Relaxed);
+                    FULLSCREEN.with(|v| v.set(false));
                     mark_fullscreen(hwnd, false);
                     let style = WINDOW_STYLE(GetWindowLongW(hwnd, GWL_STYLE) as u32);
                     SetWindowLongW(hwnd, GWL_STYLE, (style.0 | WS_OVERLAPPEDWINDOW.0) as i32);
@@ -1067,7 +1072,7 @@ impl runner::Host for Host {
     /// size/move loop (waiting there would hold the border), and a minimised window's.
     fn live(&self) -> bool {
         let sizing = viewport_queued();
-        sizing || IN_SIZEMOVE.load(Ordering::Relaxed) || is_iconic(self.hwnd)
+        sizing || IN_SIZEMOVE.with(Cell::get) || is_iconic(self.hwnd)
     }
 
     fn events(&mut self, ui: &mut Ui, _app: &mut dyn App, pacer: &mut Pacer) {
@@ -1236,7 +1241,7 @@ impl runner::Host for Host {
         // immediate presents a second during a drag. A turn more than half a refresh after the
         // last present is a new refresh (the refresh thread's turns come one period apart, a
         // frame's own drawing time after it; a whole period here would skip every other one).
-        let modal_tick = !self.resizing && IN_SIZEMOVE.load(Ordering::Relaxed);
+        let modal_tick = !self.resizing && IN_SIZEMOVE.with(Cell::get);
         let next_refresh = pacer.last_frame_at + pacer.period;
         let early = modal_tick && ui.now < next_refresh - 0.5 * pacer.period;
         let gated = modal_tick && (early || !self.be.frame_ready());
@@ -1251,7 +1256,7 @@ impl runner::Host for Host {
         // A resize frame is synchronous with the border: it does not wait for the previous
         // present to retire. Nor does any frame inside the modal loop: waiting there would hold
         // the border.
-        self.be.set_immediate(self.resizing || IN_SIZEMOVE.load(Ordering::Relaxed));
+        self.be.set_immediate(self.resizing || IN_SIZEMOVE.with(Cell::get));
         true
     }
 
