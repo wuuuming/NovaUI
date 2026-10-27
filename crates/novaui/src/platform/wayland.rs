@@ -1,6 +1,8 @@
 //! Wayland host (libwayland-client, loaded at run time). One xdg-shell toplevel without server
 //! decorations: the app draws its title bar; moving and resizing are the compositor's
-//! (`xdg_toplevel.move` / `.resize` on a press). Fractional scale comes from
+//! (`xdg_toplevel.move` / `.resize` on a press). An overlay is a `zwlr_layer_shell_v1` surface
+//! instead (the overlay layer, anchored at the bottom, placed by its margins, moved by the host
+//! as the caption is dragged); a compositor without the layer shell gets it through XWayland. Fractional scale comes from
 //! `wp_fractional_scale_v1` (with `wp_viewporter` mapping the buffer onto the logical size), else
 //! the outputs' integer scale. Keys go through xkbcommon into Windows virtual-key codes and text.
 //! The loop blocks in `poll` on the Wayland socket and the wake pipe until input, a wake or the
@@ -20,7 +22,7 @@
 
 use super::linux::{border_dir, pointer_taken, vk as vk_code, CaptionPress, HostWake, Preedit};
 use super::FRAME_EDGE;
-use super::{App, Options};
+use super::{App, Options, OverlayOptions, Place};
 use crate::app::{NcHit, Ui};
 use crate::input::{Input, Mods, MouseButton};
 use crate::render::primitive::Backend;
@@ -34,7 +36,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use wayland_client::protocol::{
     wl_buffer, wl_compositor, wl_data_device, wl_data_device_manager, wl_data_offer, wl_data_source, wl_keyboard,
-    wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_output, wl_pointer, wl_region, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::fractional_scale::v1::client::{wp_fractional_scale_manager_v1, wp_fractional_scale_v1};
@@ -42,7 +44,9 @@ use wayland_protocols::wp::text_input::zv3::client::{zwp_text_input_manager_v3, 
 use wayland_protocols::wp::viewporter::client::{wp_viewport, wp_viewporter};
 use wayland_protocols::xdg::decoration::zv1::client::{zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1, zxdg_output_v1};
 use wayland_protocols_plasma::shadow::client::{org_kde_kwin_shadow, org_kde_kwin_shadow_manager};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use xkbcommon_dl as xkb;
 
 /// Linux evdev button codes.
@@ -198,6 +202,8 @@ struct Pending {
     repeat: Option<Option<u32>>,
     /// Fractional scale, 120ths.
     frac: Option<u32>,
+    /// A layer surface's configure: its serial and the size the compositor gives (0: ours).
+    layer_configure: Option<(u32, u32, u32)>,
     files: Option<Vec<PathBuf>>,
     paste: Option<String>,
 }
@@ -252,6 +258,21 @@ struct Out {
     scale: i32,
     /// The current mode's refresh rate in mHz; 0 until the output says.
     refresh: i32,
+    /// The current mode's size in pixels, and the output's logical size (xdg-output) when the
+    /// compositor says.
+    mode: (i32, i32),
+    logical: Option<(i32, i32)>,
+    xdg: Option<zxdg_output_v1::ZxdgOutputV1>,
+}
+
+impl Out {
+    /// Its size in surface coordinates: the logical size, else the mode over the scale.
+    fn logical_size(&self) -> Option<(i32, i32)> {
+        self.logical.or_else(|| {
+            let s = self.scale.max(1);
+            (self.mode.0 > 0).then_some((self.mode.0 / s, self.mode.1 / s))
+        })
+    }
 }
 
 struct State {
@@ -265,6 +286,8 @@ struct State {
     shadow_mgr: Option<org_kde_kwin_shadow_manager::OrgKdeKwinShadowManager>,
     ddm: Option<wl_data_device_manager::WlDataDeviceManager>,
     ti_mgr: Option<zwp_text_input_manager_v3::ZwpTextInputManagerV3>,
+    layer_shell: Option<zwlr_layer_shell_v1::ZwlrLayerShellV1>,
+    xdg_outputs: Option<zxdg_output_manager_v1::ZxdgOutputManagerV1>,
     text_input: Option<zwp_text_input_v3::ZwpTextInputV3>,
     ti: TextIn,
     outputs: Vec<Out>,
@@ -296,6 +319,19 @@ impl State {
     /// The refresh rate of the fastest output the surface is on (of any output before it is
     /// on one); 60 Hz when no output says. Turns and tickers (an animation's steps) are paced
     /// by it; frames by the swap chain.
+    /// The logical size of the output the surface is on (of the first, before it is on one).
+    fn output_size(&self) -> Option<(i32, i32)> {
+        self.outputs_on().find_map(Out::logical_size)
+    }
+
+    /// Asks each output for its logical size (xdg-output), once the manager is bound.
+    fn ask_output_sizes(&mut self, qh: &QueueHandle<Self>) {
+        let Some(m) = self.xdg_outputs.clone() else { return };
+        for o in self.outputs.iter_mut().filter(|o| o.xdg.is_none()) {
+            o.xdg = Some(m.get_xdg_output(&o.output, qh, o.output.clone()));
+        }
+    }
+
     fn refresh_hz(&self) -> f64 {
         let mhz = self.outputs_on().map(|o| o.refresh).max();
         super::refresh_or_60(mhz.map(|mhz| f64::from(mhz) / 1000.0))
@@ -327,9 +363,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
             "org_kde_kwin_shadow_manager" => s.shadow_mgr = Some(r.bind(name, version.min(2), qh, ())),
             "wl_data_device_manager" => s.ddm = Some(r.bind(name, version.min(3), qh, ())),
             "zwp_text_input_manager_v3" => s.ti_mgr = Some(r.bind(name, 1, qh, ())),
+            "zwlr_layer_shell_v1" => s.layer_shell = Some(r.bind(name, version.min(4), qh, ())),
+            "zxdg_output_manager_v1" => s.xdg_outputs = Some(r.bind(name, version.min(3), qh, ())),
             "wl_output" => {
                 let o: wl_output::WlOutput = r.bind(name, version.min(2), qh, ());
-                s.outputs.push(Out { output: o, scale: 1, refresh: 0 });
+                s.outputs.push(Out { output: o, scale: 1, refresh: 0, mode: (0, 0), logical: None, xdg: None });
             }
             _ => {}
         }
@@ -348,11 +386,48 @@ impl Dispatch<wl_output::WlOutput, ()> for State {
         let Some(out) = s.outputs.iter_mut().find(|x| &x.output == o) else { return };
         match e {
             wl_output::Event::Scale { factor } => out.scale = factor.max(1),
-            wl_output::Event::Mode { flags, refresh, .. }
+            wl_output::Event::Mode { flags, refresh, width, height }
                 if flags.into_result().is_ok_and(|f| f.contains(wl_output::Mode::Current)) =>
             {
                 out.refresh = refresh;
+                out.mode = (width, height);
             }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<zxdg_output_v1::ZxdgOutputV1, wl_output::WlOutput> for State {
+    fn event(
+        s: &mut Self,
+        _: &zxdg_output_v1::ZxdgOutputV1,
+        e: zxdg_output_v1::Event,
+        output: &wl_output::WlOutput,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zxdg_output_v1::Event::LogicalSize { width, height } = e {
+            if let Some(o) = s.outputs.iter_mut().find(|o| &o.output == output) {
+                o.logical = Some((width, height));
+            }
+        }
+    }
+}
+
+impl Dispatch<zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, ()> for State {
+    fn event(
+        s: &mut Self,
+        _: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        e: zwlr_layer_surface_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match e {
+            zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
+                s.p.layer_configure = Some((serial, width, height));
+            }
+            zwlr_layer_surface_v1::Event::Closed => s.p.close = true,
             _ => {}
         }
     }
@@ -791,6 +866,9 @@ delegate_noop!(State: ignore org_kde_kwin_shadow_manager::OrgKdeKwinShadowManage
 delegate_noop!(State: ignore org_kde_kwin_shadow::OrgKdeKwinShadow);
 delegate_noop!(State: ignore wl_data_device_manager::WlDataDeviceManager);
 delegate_noop!(State: ignore zwp_text_input_manager_v3::ZwpTextInputManagerV3);
+delegate_noop!(State: ignore zwlr_layer_shell_v1::ZwlrLayerShellV1);
+delegate_noop!(State: ignore zxdg_output_manager_v1::ZxdgOutputManagerV1);
+delegate_noop!(State: ignore wl_region::WlRegion);
 
 /// A shared-memory buffer (shadow tiles, cursor images): ARGB8888 premultiplied.
 fn shm_buffer(
@@ -820,11 +898,16 @@ fn shm_buffer(
     Some(b)
 }
 
+/// The surface's role: a window's (an xdg toplevel) or an overlay's (a layer surface).
+enum Role {
+    Toplevel { xdg: xdg_surface::XdgSurface, top: xdg_toplevel::XdgToplevel },
+    Layer(zwlr_layer_surface_v1::ZwlrLayerSurfaceV1),
+}
+
 /// The window: its surface, roles and the scale it is drawn at.
 struct Win {
     surface: wl_surface::WlSurface,
-    _xdg: xdg_surface::XdgSurface,
-    top: xdg_toplevel::XdgToplevel,
+    role: Role,
     viewport: Option<wp_viewport::WpViewport>,
     _frac: Option<wp_fractional_scale_v1::WpFractionalScaleV1>,
     /// Logical size (surface coordinates).
@@ -837,6 +920,14 @@ struct Win {
 }
 
 impl Win {
+    /// The toplevel, when the window is one (not an overlay).
+    fn top(&self) -> Option<&xdg_toplevel::XdgToplevel> {
+        match &self.role {
+            Role::Toplevel { top, .. } => Some(top),
+            Role::Layer(_) => None,
+        }
+    }
+
     fn scale(&self) -> f32 {
         self.scale120 as f32 / 120.0
     }
@@ -1021,8 +1112,17 @@ fn make_backend(
     let (w, h) = win.px();
     let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
     let surface = win.surface.id().as_ptr() as *mut std::ffi::c_void;
+    let overlay = matches!(win.role, Role::Layer(_));
+    let attach = |v: &mut crate::render::vulkan::Vulkan| {
+        v.set_transparent(overlay);
+        v.attach(crate::render::vulkan::Window::Wayland { display, surface }, w, h)
+    };
     match crate::render::vulkan::Vulkan::new(w, h) {
-        Ok(mut v) => match v.attach(crate::render::vulkan::Window::Wayland { display, surface }, w, h) {
+        Ok(mut v) => match attach(&mut v) {
+            Ok(()) if overlay && !v.composes_alpha() => {
+                eprintln!("novaui: the Vulkan Wayland surface composes no alpha");
+                None
+            }
             Ok(()) => Some(Box::new(v)),
             Err(e) => {
                 eprintln!("novaui: Vulkan Wayland surface unavailable ({e})");
@@ -1062,6 +1162,44 @@ struct WlHost {
     repeat: Option<(u32, f64)>,
     /// The window's accessibility tree (AT-SPI), when the app asked for it.
     access: Option<crate::access::Bridge>,
+    /// The window is an overlay (a layer surface): where it stands and its drag.
+    overlay: Option<Layered>,
+}
+
+/// An overlay's place as a layer surface's margins (logical), and the host's own move of it.
+struct Layered {
+    /// The bottom margin, and where its centre stands from the left once it has been placed
+    /// across (`None`: centred by the compositor, anchored at the bottom only).
+    bottom: i32,
+    centre: Option<i32>,
+    /// A caption drag: the pointer's logical position in the surface where it is held.
+    drag: Option<(f64, f64)>,
+}
+
+/// `Place::x` of an overlay the compositor centres.
+const CENTRED: i32 = i32::MIN;
+
+impl Layered {
+    /// The place it stands at (`Place`: the bottom centre's distance from the left and bottom
+    /// of the output's free area).
+    fn place(&self) -> Place {
+        Place { x: self.centre.unwrap_or(CENTRED), y: self.bottom }
+    }
+
+    /// Anchors and margins to the surface for a `lw`-wide surface.
+    fn apply(&self, layer: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1, lw: i32) {
+        use zwlr_layer_surface_v1::Anchor;
+        match self.centre {
+            Some(c) => {
+                layer.set_anchor(Anchor::Bottom | Anchor::Left);
+                layer.set_margin(0, 0, self.bottom, c - lw / 2);
+            }
+            None => {
+                layer.set_anchor(Anchor::Bottom);
+                layer.set_margin(0, 0, self.bottom, 0);
+            }
+        }
+    }
 }
 
 impl runner::Host for WlHost {
@@ -1107,13 +1245,26 @@ impl runner::Host for WlHost {
             ui.window.fullscreen = f;
         }
         if let Some(sr) = self.st.p.configure_serial.take() {
-            self.win._xdg.ack_configure(sr);
+            if let Role::Toplevel { xdg, .. } = &self.win.role {
+                xdg.ack_configure(sr);
+            }
+        }
+        if let Some((serial, w, h)) = self.st.p.layer_configure.take() {
+            if let Role::Layer(l) = &self.win.role {
+                l.ack_configure(serial);
+            }
+            if w > 0 && h > 0 && (w as i32, h as i32) != (self.win.lw, self.win.lh) {
+                (self.win.lw, self.win.lh) = (w as i32, h as i32);
+                resized = true;
+            }
         }
         if resized {
             self.win.apply_scale();
             let (w, h) = self.win.px();
             ui.resize(w, h, self.win.scale());
-            kde_shadow(&self.st, &self.qh, &mut self.win);
+            if self.overlay.is_none() {
+                kde_shadow(&self.st, &self.qh, &mut self.win);
+            }
         }
         if self.st.p.close {
             ui.window.req.close = true;
@@ -1138,11 +1289,31 @@ impl runner::Host for WlHost {
         if let Some((x, y)) = pointer_moved {
             let e = if self.pressed_in_client { None } else { border_dir(ui, x, y) };
             self.edge = e;
-            // A caption press that left the slop is a move: the app's press ends here, and the
-            // compositor takes the pointer.
-            if let (Some((px, py)), Some(seat)) = (self.caption.moved(x, y), self.st.seat.as_ref()) {
+            if let Some(o) = self.overlay.as_mut().filter(|o| o.drag.is_some()) {
+                // An overlay follows the held pointer itself: a layer surface has no move.
+                if let (Some((hx, hy)), Some((lx, ly))) = (o.drag, self.st.p.pointer) {
+                    let (dx, dy) = ((lx - hx).round() as i32, (ly - hy).round() as i32);
+                    if (dx, dy) != (0, 0) {
+                        let lw = self.win.lw;
+                        o.centre = o.centre.or_else(|| self.st.output_size().map(|(w, _)| w / 2)).map(|c| c + dx);
+                        o.bottom -= dy;
+                        if let Role::Layer(l) = &self.win.role {
+                            o.apply(l, lw);
+                            self.win.surface.commit();
+                        }
+                        ui.window.place = Some(o.place());
+                        ui.events.push(crate::Event::Moved);
+                    }
+                }
+            } else if let Some((px, py)) = self.caption.moved(x, y) {
+                // A caption press that left the slop is a move: the app's press ends here, and
+                // the compositor takes the pointer (an overlay's host moves it).
                 pointer_taken(ui, &mut self.pressed_in_client, (px, py), MouseButton::Left);
-                self.win.top._move(seat, self.caption_serial);
+                if let Some(o) = &mut self.overlay {
+                    o.drag = Some((px as f64 / s as f64, py as f64 / s as f64));
+                } else if let (Some(top), Some(seat)) = (self.win.top(), self.st.seat.as_ref()) {
+                    top._move(seat, self.caption_serial);
+                }
             } else {
                 ui.input(Input::Move(x, y));
             }
@@ -1152,8 +1323,9 @@ impl runner::Host for WlHost {
             let hit = app.nc_hit(ui, x, y);
             let mut taken = false;
             if hit != NcHit::ClientControl {
-                if let (Some(d), Some(seat)) = (border_dir(ui, x, y), self.st.seat.as_ref()) {
-                    self.win.top.resize(seat, serial, resize_edge(d));
+                if let (Some(d), Some(seat), Some(top)) = (border_dir(ui, x, y), self.st.seat.as_ref(), self.win.top())
+                {
+                    top.resize(seat, serial, resize_edge(d));
                     taken = true;
                 }
             }
@@ -1169,6 +1341,9 @@ impl runner::Host for WlHost {
         }
         if let Some((lx, ly)) = self.st.p.left_up.take() {
             self.caption.release();
+            if let Some(o) = &mut self.overlay {
+                o.drag = None;
+            }
             if self.pressed_in_client {
                 self.pressed_in_client = false;
                 ui.input(Input::Up(phys(lx), phys(ly), MouseButton::Left));
@@ -1187,9 +1362,11 @@ impl runner::Host for WlHost {
         // pointer: the app's press ends here.
         if let Some((lx, ly, serial)) = self.st.p.right_down.take() {
             let (x, y) = (phys(lx), phys(ly));
-            if let (NcHit::Caption, Some(seat)) = (app.nc_hit(ui, x, y), self.st.seat.as_ref()) {
+            if let (NcHit::Caption, Some(seat), Some(top)) =
+                (app.nc_hit(ui, x, y), self.st.seat.as_ref(), self.win.top())
+            {
                 ui.input(Input::Up(x, y, MouseButton::Right));
-                self.win.top.show_window_menu(seat, serial, lx as i32, ly as i32);
+                top.show_window_menu(seat, serial, lx as i32, ly as i32);
             }
         }
         // Key repeat (the client's job on Wayland).
@@ -1221,7 +1398,34 @@ impl runner::Host for WlHost {
     }
 
     fn requests(&mut self, ui: &mut Ui, req: super::Requests) {
-        let top = &self.win.top;
+        if let (Some(o), Role::Layer(l)) = (&self.overlay, &self.win.role) {
+            let mut commit = false;
+            if let Some((w, h)) = req.size {
+                let (w, h) = (w.round().max(1.0) as i32, h.round().max(1.0) as i32);
+                if (w, h) != (self.win.lw, self.win.lh) {
+                    l.set_size(w as u32, h as u32);
+                    o.apply(l, w);
+                    commit = true;
+                }
+            }
+            if let Some(on) = req.click_through {
+                // An empty input region: presses go to what is under it (no hover: Wayland
+                // gives a client no pointer outside its surfaces).
+                match (on, &self.st.compositor) {
+                    (true, Some(c)) => {
+                        let region = c.create_region(&self.qh, ());
+                        self.win.surface.set_input_region(Some(&region));
+                        region.destroy();
+                    }
+                    _ => self.win.surface.set_input_region(None),
+                }
+                commit = true;
+            }
+            if commit {
+                self.win.surface.commit();
+            }
+        }
+        let Some(top) = self.win.top() else { return };
         if req.minimize {
             top.set_minimized();
         }
@@ -1331,10 +1535,19 @@ impl runner::Host for WlHost {
     }
 }
 
-/// Opens the window and runs `app` until it closes. Returns false when no Wayland window could
-/// be made (no compositor, no xdg-shell, no Vulkan surface): the caller falls back to X11.
-pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>) -> bool {
-    let Ok(conn) = Connection::connect_to_env() else { return false };
+/// A connection with its globals bound, and the queue its events come on.
+struct Connected {
+    conn: Connection,
+    q: EventQueue<State>,
+    qh: QueueHandle<State>,
+    st: State,
+    compositor: wl_compositor::WlCompositor,
+}
+
+/// Connects to the compositor and binds its globals (two roundtrips: the globals, then the
+/// seat's capabilities and the outputs' scales and sizes). `None` without a compositor.
+fn connect() -> Option<Connected> {
+    let conn = Connection::connect_to_env().ok()?;
     let mut q: EventQueue<State> = conn.new_event_queue();
     let qh = q.handle();
     let mut st = State {
@@ -1348,6 +1561,8 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
         shadow_mgr: None,
         ddm: None,
         ti_mgr: None,
+        layer_shell: None,
+        xdg_outputs: None,
         text_input: None,
         ti: TextIn::default(),
         outputs: Vec::new(),
@@ -1365,44 +1580,52 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
         conn: conn.clone(),
     };
     conn.display().get_registry(&qh, ());
-    if q.roundtrip(&mut st).is_err() {
-        return false;
-    }
-    let (Some(compositor), Some(wm)) = (st.compositor.clone(), st.wm.clone()) else {
+    q.roundtrip(&mut st).ok()?;
+    let compositor = st.compositor.clone()?;
+    st.ask_output_sizes(&qh);
+    let _ = q.roundtrip(&mut st);
+    Some(Connected { conn, q, qh, st, compositor })
+}
+
+/// A surface's viewport and fractional scale, where the compositor has them.
+fn scaling(
+    st: &State,
+    qh: &QueueHandle<State>,
+    surface: &wl_surface::WlSurface,
+) -> (Option<wp_viewport::WpViewport>, Option<wp_fractional_scale_v1::WpFractionalScaleV1>) {
+    let viewport = st.viewporter.as_ref().map(|v| v.get_viewport(surface, qh, ()));
+    let frac = match (&st.frac_mgr, &viewport) {
+        (Some(m), Some(_)) => Some(m.get_fractional_scale(surface, qh, ())),
+        _ => None,
+    };
+    (viewport, frac)
+}
+
+/// Opens the window and runs `app` until it closes. Returns false when no Wayland window could
+/// be made (no compositor, no xdg-shell, no Vulkan surface): the caller falls back to X11.
+pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>) -> bool {
+    let Some(mut c) = connect() else { return false };
+    let Some(wm) = c.st.wm.clone() else {
         eprintln!("novaui: the compositor has no xdg-shell; X11 fallback");
         return false;
     };
-    // Seat capabilities and output scales.
-    let _ = q.roundtrip(&mut st);
-    let data_device = match (&st.ddm, &st.seat) {
-        (Some(m), Some(s)) => Some(m.get_data_device(s, &qh, ())),
-        _ => None,
-    };
-    st.text_input = match (&st.ti_mgr, &st.seat) {
-        (Some(m), Some(s)) => Some(m.get_text_input(s, &qh, ())),
-        _ => None,
-    };
-
-    let surface = compositor.create_surface(&qh, ());
+    let qh = c.qh.clone();
+    let surface = c.compositor.create_surface(&qh, ());
     let xdg = wm.get_xdg_surface(&surface, &qh, ());
     let top = xdg.get_toplevel(&qh, ());
     top.set_title(opts.title.clone());
     top.set_app_id(opts.title.to_lowercase().replace(' ', "-"));
     // Our own title bar: ask for no server decorations (KWin honours it).
-    if let Some(d) = &st.deco {
+    if let Some(d) = &c.st.deco {
         let td = d.get_toplevel_decoration(&top, &qh, ());
         td.set_mode(zxdg_toplevel_decoration_v1::Mode::ClientSide);
     }
-    let viewport = st.viewporter.as_ref().map(|v| v.get_viewport(&surface, &qh, ()));
-    let frac = match (&st.frac_mgr, &viewport) {
-        (Some(m), Some(_)) => Some(m.get_fractional_scale(&surface, &qh, ())),
-        _ => None,
-    };
-    let int_scale = st.outputs_on().map(|o| o.scale).max().unwrap_or(1).max(1);
+    let (viewport, frac) = scaling(&c.st, &qh, &surface);
+    let int_scale = c.st.outputs_on().map(|o| o.scale).max().unwrap_or(1).max(1);
+    top.set_min_size(opts.min_width, opts.min_height);
     let mut win = Win {
         surface,
-        _xdg: xdg,
-        top,
+        role: Role::Toplevel { xdg, top },
         viewport,
         _frac: frac,
         lw: opts.width,
@@ -1411,35 +1634,145 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
         shadow: None,
         shadow_scale: 0,
     };
-    win.top.set_min_size(opts.min_width, opts.min_height);
     win.surface.commit();
     // The first configure (size, states) and the preferred scale.
     let t_wait = Instant::now();
-    while st.p.configure_serial.is_none() && t_wait.elapsed() < std::time::Duration::from_secs(3) {
-        if q.blocking_dispatch(&mut st).is_err() {
+    while c.st.p.configure_serial.is_none() && t_wait.elapsed() < std::time::Duration::from_secs(3) {
+        if c.q.blocking_dispatch(&mut c.st).is_err() {
             return false;
         }
     }
-    let _ = q.roundtrip(&mut st);
-    if let Some(f) = st.p.frac.take() {
+    let _ = c.q.roundtrip(&mut c.st);
+    if let Some(f) = c.st.p.frac.take() {
         win.scale120 = f.max(120);
     }
-    let mut maximized = false;
-    let mut fullscreen_on = false;
-    if let Some((size, m, f)) = st.p.configure.take() {
+    let mut state = (false, false);
+    if let Some((size, m, f)) = c.st.p.configure.take() {
         if let Some((w, h)) = size {
             (win.lw, win.lh) = (w, h);
         }
-        maximized = m;
-        fullscreen_on = f;
+        state = (m, f);
     }
-    if let Some(s) = st.p.configure_serial.take() {
-        win._xdg.ack_configure(s);
+    if let (Some(s), Role::Toplevel { xdg, .. }) = (c.st.p.configure_serial.take(), &win.role) {
+        xdg.ack_configure(s);
     }
     win.apply_scale();
-
-    let Some(be) = make_backend(opts.backend, &conn, &win) else {
+    let Some(be) = make_backend(opts.backend, &c.conn, &win) else {
         return false;
+    };
+    let access = opts.accessibility.then(|| opts.title.clone());
+    host_loop(c, win, be, Opened { backend: opts.backend, access, state, overlay: None }, |ui| make(ui))
+}
+
+/// Opens an overlay (`OverlayOptions`) as a layer surface and runs `app` in it until it closes.
+/// `Err(make)`, before anything ran, when the compositor has no layer shell (GNOME) or no
+/// transparent Vulkan surface: the caller opens it through XWayland.
+pub(super) fn run_overlay<F: FnOnce(&mut Ui) -> Box<dyn App>>(opts: &OverlayOptions, make: F) -> Result<(), F> {
+    let Some(mut c) = connect() else { return Err(make) };
+    let Some(shell) = c.st.layer_shell.clone() else {
+        eprintln!("novaui: the compositor has no layer shell; the overlay goes through XWayland");
+        return Err(make);
+    };
+    let qh = c.qh.clone();
+    let surface = c.compositor.create_surface(&qh, ());
+    let layer =
+        shell.get_layer_surface(&surface, None, zwlr_layer_shell_v1::Layer::Overlay, "novaui-overlay".into(), &qh, ());
+    let (lw, lh) = (opts.width.round().max(1.0) as i32, opts.height.round().max(1.0) as i32);
+    // A kept place on the output (its free area is at most the output), else the default: centred,
+    // `lift` of the output's height up.
+    let size = c.st.output_size();
+    let fits =
+        |p: &Place| size.is_none_or(|(w, h)| (p.x == CENTRED || (0..=w).contains(&p.x)) && (0..h).contains(&p.y));
+    let placed = match opts.place.filter(fits) {
+        Some(p) => Layered { bottom: p.y, centre: (p.x != CENTRED).then_some(p.x), drag: None },
+        None => {
+            let h = size.map_or(1080, |(_, h)| h);
+            Layered { bottom: (opts.lift.clamp(0.0, 1.0) * h as f32).round() as i32, centre: None, drag: None }
+        }
+    };
+    layer.set_size(lw as u32, lh as u32);
+    placed.apply(&layer, lw);
+    layer.set_exclusive_zone(0);
+    layer.set_keyboard_interactivity(zwlr_layer_surface_v1::KeyboardInteractivity::None);
+    if opts.click_through {
+        let region = c.compositor.create_region(&qh, ());
+        surface.set_input_region(Some(&region));
+        region.destroy();
+    }
+    let (viewport, frac) = scaling(&c.st, &qh, &surface);
+    let int_scale = c.st.outputs_on().map(|o| o.scale).max().unwrap_or(1).max(1);
+    let mut win = Win {
+        surface,
+        role: Role::Layer(layer),
+        viewport,
+        _frac: frac,
+        lw,
+        lh,
+        scale120: int_scale as u32 * 120,
+        shadow: None,
+        shadow_scale: 0,
+    };
+    win.surface.commit();
+    let t_wait = Instant::now();
+    while c.st.p.layer_configure.is_none() && t_wait.elapsed() < std::time::Duration::from_secs(3) {
+        if c.q.blocking_dispatch(&mut c.st).is_err() {
+            return Err(make);
+        }
+    }
+    let _ = c.q.roundtrip(&mut c.st);
+    if let Some(f) = c.st.p.frac.take() {
+        win.scale120 = f.max(120);
+    }
+    if let Some((serial, w, h)) = c.st.p.layer_configure.take() {
+        if let Role::Layer(l) = &win.role {
+            l.ack_configure(serial);
+        }
+        if w > 0 && h > 0 {
+            (win.lw, win.lh) = (w as i32, h as i32);
+        }
+    }
+    win.apply_scale();
+    let Some(be) = make_backend(opts.backend, &c.conn, &win) else {
+        if let Role::Layer(l) = &win.role {
+            l.destroy();
+        }
+        win.surface.destroy();
+        let _ = c.conn.flush();
+        return Err(make);
+    };
+    let opened = Opened { backend: opts.backend, access: None, state: (false, false), overlay: Some(placed) };
+    host_loop(c, win, be, opened, make);
+    Ok(())
+}
+
+/// What a window opened with besides its surface: its backend's kind, the title its
+/// accessibility tree is named by (none: no tree), its first maximized and fullscreen states,
+/// and an overlay's place.
+struct Opened {
+    backend: super::BackendKind,
+    access: Option<String>,
+    state: (bool, bool),
+    overlay: Option<Layered>,
+}
+
+/// Runs the app in a window opened (`run`, `run_overlay`) until it closes.
+fn host_loop(
+    c: Connected,
+    win: Win,
+    be: Box<dyn Backend>,
+    opened: Opened,
+    make: impl FnOnce(&mut Ui) -> Box<dyn App>,
+) -> bool {
+    let Connected { conn, mut q, qh, st, compositor } = c;
+    let Opened { backend, access, state: (maximized, fullscreen_on), overlay } = opened;
+    let data_device = match (&st.ddm, &st.seat, &overlay) {
+        (Some(m), Some(s), None) => Some(m.get_data_device(s, &qh, ())),
+        _ => None,
+    };
+    let mut st = st;
+    st.text_input = match (&st.ti_mgr, &st.seat, &overlay) {
+        (Some(m), Some(s), None) => Some(m.get_text_input(s, &qh, ())),
+        _ => None,
     };
     let cursor_surface = compositor.create_surface(&qh, ());
     let cursors = Cursors {
@@ -1452,7 +1785,6 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
     };
 
     let mut fds = [0 as c_int; 2];
-    // SAFETY: `fds` is a live local of the two descriptors pipe writes; only they are touched.
     // Without the check a failed pipe left `fds` at 0 and the flags (and the final close) went
     // to standard input.
     if let Err(e) = super::linux::wake_pipe(&mut fds) {
@@ -1468,7 +1800,12 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
     ui.set_task_wake(wake.clone());
     ui.window.maximized = maximized;
     ui.window.fullscreen = fullscreen_on;
+    if let Some(o) = &overlay {
+        ui.window.place = Some(o.place());
+        ui.window.work_area = st.output_size().map(|(w, h)| (w as f32, h as f32));
+    }
     let mut app = make(&mut ui);
+    let is_overlay = overlay.is_some();
     let mut host = WlHost {
         conn,
         qh,
@@ -1477,7 +1814,7 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
         cursors,
         data_device,
         be,
-        backend: opts.backend,
+        backend,
         t0: Instant::now(),
         fds,
         pending,
@@ -1488,10 +1825,13 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
         edge: None,
         enter_serial: 0,
         repeat: None,
-        access: opts.accessibility.then(|| super::linux::access(wake.clone(), opts.title.clone())),
+        access: access.map(|title| super::linux::access(wake.clone(), title)),
+        overlay,
     };
     runner::start(&mut host, &mut ui, app.as_mut());
-    kde_shadow(&host.st, &host.qh, &mut host.win);
+    if !is_overlay {
+        kde_shadow(&host.st, &host.qh, &mut host.win);
+    }
     let _ = host.conn.flush();
 
     let wfd = host.conn.backend().poll_fd().as_raw_fd();
@@ -1537,8 +1877,13 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
     if let Some(sh) = win.shadow.take() {
         drop_shadow(sh);
     }
-    win.top.destroy();
-    win._xdg.destroy();
+    match win.role {
+        Role::Toplevel { xdg, top } => {
+            top.destroy();
+            xdg.destroy();
+        }
+        Role::Layer(l) => l.destroy(),
+    }
     win.surface.destroy();
     let _ = conn.flush();
     // SAFETY: the wake pipe's two descriptors, opened above and closed once, here.

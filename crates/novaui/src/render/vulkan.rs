@@ -260,6 +260,8 @@ struct Wsi {
     format: vk::Format,
     extent: (i32, i32),
     stale: bool,
+    /// How the swap chain composes the canvas's alpha.
+    alpha: vk::CompositeAlphaFlagsKHR,
 }
 
 /// The loader stays mapped for the life of the process: drivers keep threads that run loader code
@@ -320,6 +322,9 @@ pub struct Vulkan {
     has_surface_ext: bool,
     adapter: String,
     lost: bool,
+    /// The window shows what is under it where the canvas is transparent (an overlay): the swap
+    /// chain composes premultiplied alpha (`set_transparent`).
+    transparent: bool,
 }
 
 /// Same policy as D3D11: 256-px buckets, reused while not more than twice too large.
@@ -550,6 +555,7 @@ impl Vulkan {
             has_surface_ext,
             adapter,
             lost: false,
+            transparent: false,
         };
         v.ubo = v.buffer(UBO_SLOT * UBO_SLOTS, vk::BufferUsageFlags::UNIFORM_BUFFER)?;
         v.insts_buf = v.buffer(INST_SIZE * 16384, vk::BufferUsageFlags::VERTEX_BUFFER)?;
@@ -657,6 +663,18 @@ impl Vulkan {
         Ok(out)
     }
 
+    /// The swap chain made by `attach` composes the canvas's premultiplied alpha (an overlay):
+    /// `PRE_MULTIPLIED` where the surface offers it, else `INHERIT` (the window's visual says,
+    /// an ARGB one on X11). Set before `attach`.
+    pub fn set_transparent(&mut self, on: bool) {
+        self.transparent = on;
+    }
+
+    /// Whether the swap chain composes alpha (`set_transparent` and a surface that offers it).
+    pub fn composes_alpha(&self) -> bool {
+        self.wsi.as_ref().is_some_and(|w| w.alpha != vk::CompositeAlphaFlagsKHR::OPAQUE)
+    }
+
     /// Window mode: a FIFO swap chain on the given surface.
     pub fn attach(&mut self, window: Window, w: i32, h: i32) -> Result<(), String> {
         if !self.has_surface_ext {
@@ -712,6 +730,7 @@ impl Vulkan {
                 format: vk::Format::B8G8R8A8_UNORM,
                 extent: (0, 0),
                 stale: true,
+                alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
             });
             self.make_swapchain(w, h)
         }
@@ -747,9 +766,16 @@ impl Vulkan {
         let count =
             (caps.min_image_count + 1).min(if caps.max_image_count == 0 { u32::MAX } else { caps.max_image_count });
         // Opaque where offered; NVIDIA's Wayland surface offers only INHERIT (the compositor
-        // takes the buffer as the surface says, and ours is opaque).
-        let alpha = [vk::CompositeAlphaFlagsKHR::OPAQUE, vk::CompositeAlphaFlagsKHR::INHERIT]
-            .into_iter()
+        // takes the buffer as the surface says, and ours is opaque). A transparent window's
+        // alpha is premultiplied, as the canvas is drawn.
+        let order: &[vk::CompositeAlphaFlagsKHR] = if self.transparent {
+            &[vk::CompositeAlphaFlagsKHR::PRE_MULTIPLIED, vk::CompositeAlphaFlagsKHR::INHERIT]
+        } else {
+            &[vk::CompositeAlphaFlagsKHR::OPAQUE, vk::CompositeAlphaFlagsKHR::INHERIT]
+        };
+        let alpha = order
+            .iter()
+            .copied()
             .find(|a| caps.supported_composite_alpha.contains(*a))
             .unwrap_or(vk::CompositeAlphaFlagsKHR::OPAQUE);
         let old = ws.sc;
@@ -768,6 +794,7 @@ impl Vulkan {
             .clipped(true)
             .old_swapchain(old);
         let sc = ws.sc_d.create_swapchain(&ci, None).map_err(|e| format!("swapchain: {e}"))?;
+        ws.alpha = alpha;
         if old != vk::SwapchainKHR::null() {
             ws.sc_d.destroy_swapchain(old, None);
         }

@@ -147,6 +147,22 @@ impl Xim {
         x
     }
 
+    /// No input method (an overlay, which never has the keyboard): keys are looked up plainly.
+    pub(super) fn none(mask: c_long) -> Xim {
+        Xim {
+            im: std::ptr::null_mut(),
+            ic: std::ptr::null_mut(),
+            style: 0,
+            cb: Box::into_raw(Box::default()),
+            mask,
+            waiting: false,
+            focused: false,
+            spot: None,
+            shown: Preedit::default(),
+            fonts: std::ptr::null_mut(),
+        }
+    }
+
     /// The context, for `Xutf8LookupString`; null without one.
     pub(super) fn ic(&self) -> xlib::XIC {
         self.ic

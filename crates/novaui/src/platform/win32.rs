@@ -1319,7 +1319,7 @@ impl runner::Host for Host {
 
     /// Windows 10 draws no edge on a frameless window; Windows 11 draws its own (DWM).
     fn edge(&self, ui: &Ui) -> Option<crate::geom::Color> {
-        let edge = !WIN11.load(Ordering::Relaxed) && ui.window.framed() && !self.overlay;
+        let edge = !WIN11.load(Ordering::Relaxed) && ui.window.framed();
         edge.then_some(super::FRAME_EDGE)
     }
 

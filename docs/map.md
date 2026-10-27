@@ -144,8 +144,9 @@ elements on an evicted page repaint (`take_stale`); a full reset when nothing ca
 | `platform/win32.rs` (+`win32_vblank.rs`, `window_state.rs`) | Win32 host, file dialogs, clipboard, locale |
 | `platform/win32_overlay.rs` | Win32 overlays: the window, its place about its bottom centre, click-through and the pointer hook |
 | `platform/win32_hdr.rs` | the window's output, HDR or SDR: SDR white and peak (`Backend::set_output`) |
-| `platform/wayland.rs` | Wayland host (Vulkan only; falls back to X11 when it cannot open); input methods through `zwp_text_input_v3` |
+| `platform/wayland.rs` | Wayland host (Vulkan only; falls back to X11 when it cannot open); input methods through `zwp_text_input_v3`; overlays as layer surfaces (`Layered`: margins, the host's own drag) |
 | `platform/x11.rs` | X11 host (Vulkan or software `XPutImage`) |
+| `platform/x11_overlay.rs` | X11 overlays: the ARGB window and its properties, the main display's work area, the place about its bottom centre, click-through (XFixes) and raw motion (XInput2) |
 | `platform/xim.rs` | X11 input methods (XIM): over-the-spot at the caret, on-the-spot (preedit through callbacks) where that is all, server start and restart |
 | `platform/linux.rs` | shared by both Linux hosts: wake pipe, keysym → VK, the input method's preedit to `Ui` (`Preedit`), KDE shadow tiles, caption press, dialogs and clipboard via child processes, locale, environment preparation |
 

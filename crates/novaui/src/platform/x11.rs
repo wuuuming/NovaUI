@@ -12,7 +12,7 @@
 
 use super::linux::{border_dir, pointer_taken, vk, CaptionPress, HostWake};
 use super::xim::Xim;
-use super::{App, Options};
+use super::{App, Options, OverlayOptions, Place};
 use crate::app::{NcHit, Ui};
 use crate::geom::Rect;
 use crate::input::{Input, Mods, MouseButton};
@@ -25,6 +25,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
 use x11_dl::xlib;
+
+#[path = "x11_overlay.rs"]
+mod overlay;
 
 /// The events the window takes (an input method's own are added, `Xim`).
 const EVENT_MASK: c_long = xlib::ExposureMask
@@ -216,6 +219,18 @@ fn make_backend(kind: super::BackendKind, x: &X, w: i32, h: i32) -> Box<dyn Back
     }
 }
 
+/// An overlay's backend: Vulkan composing the canvas's alpha. `Err` where it cannot (no Vulkan,
+/// a surface that composes no alpha): the software path puts opaque pixels.
+fn transparent_backend(x: &X, w: i32, h: i32) -> Result<Box<dyn Backend>, String> {
+    let mut v = crate::render::vulkan::Vulkan::new(w, h)?;
+    v.set_transparent(true);
+    v.attach(crate::render::vulkan::Window::Xlib { display: x.dpy as *mut _, window: x.pres }, w, h)?;
+    if !v.composes_alpha() {
+        return Err("the Vulkan surface composes no alpha".into());
+    }
+    Ok(Box::new(v))
+}
+
 /// A `w`×`h` window under `parent` taking `events`, with no background and NorthWest bit gravity.
 /// The X server would clear a window to its background on every resize, before our frame at the
 /// new size lands (a black flash per step of a live resize); the gravity keeps the old contents
@@ -272,7 +287,9 @@ impl X {
         (xl.XInternAtom)(dpy, c.as_ptr(), 0)
     }
 
-    unsafe fn open(opts: &Options) -> Result<X, String> {
+    /// Opens the display and makes the window (hidden): `overlay`, an overlay's at its place
+    /// (returned with it).
+    unsafe fn open(opts: &Options, overlay: Option<&OverlayOptions>) -> Result<(X, Option<Place>), String> {
         libc::setlocale(libc::LC_CTYPE, c"".as_ptr());
         let xl = xlib::Xlib::open().map_err(|e| format!("libX11: {e}"))?;
         (xl.XInitThreads)();
@@ -285,7 +302,14 @@ impl X {
         let root = (xl.XRootWindow)(dpy, screen);
         let scale = dpi_scale(&xl, dpy);
         let (w, h) = ((opts.width as f32 * scale) as u32, (opts.height as f32 * scale) as u32);
-        let win = plain_window(&xl, dpy, root, (w, h), EVENT_MASK);
+        let argb = match overlay {
+            Some(_) => Some(overlay::argb_visual(&xl, dpy, root).ok_or("no 32-bit visual for a transparent window")?),
+            None => None,
+        };
+        let win = match argb {
+            Some(v) => overlay::window(&xl, dpy, root, (0, 0, w, h), EVENT_MASK, v),
+            None => plain_window(&xl, dpy, root, (w, h), EVENT_MASK),
+        };
         let atoms = Atoms {
             wm_protocols: Self::atom(&xl, dpy, "WM_PROTOCOLS"),
             wm_delete: Self::atom(&xl, dpy, "WM_DELETE_WINDOW"),
@@ -342,13 +366,16 @@ impl X {
             hints.as_ptr() as *const c_uchar,
             5,
         );
-        let mut sh: xlib::XSizeHints = std::mem::zeroed();
-        sh.flags = xlib::PMinSize;
-        sh.min_width = (opts.min_width as f32 * scale) as c_int;
-        sh.min_height = (opts.min_height as f32 * scale) as c_int;
-        (xl.XSetWMNormalHints)(dpy, win, &mut sh);
+        if overlay.is_none() {
+            let mut sh: xlib::XSizeHints = std::mem::zeroed();
+            sh.flags = xlib::PMinSize;
+            sh.min_width = (opts.min_width as f32 * scale) as c_int;
+            sh.min_height = (opts.min_height as f32 * scale) as c_int;
+            (xl.XSetWMNormalHints)(dpy, win, &mut sh);
+        }
         set_title(&xl, dpy, win, &atoms, opts.title.clone());
-        let xim = Xim::new(&xl, dpy, win, EVENT_MASK);
+        // An overlay never has the keyboard: no input method.
+        let xim = if overlay.is_some() { Xim::none(EVENT_MASK) } else { Xim::new(&xl, dpy, win, EVENT_MASK) };
         // XC_left_ptr, XC_hand2, XC_xterm, XC_fleur, XC_sb_v_double_arrow.
         let cursors = [68, 60, 152, 52, 116].map(|c| (xl.XCreateFontCursor)(dpy, c));
         // XC_top_left_corner, top_side, top_right_corner, right_side, bottom_right_corner,
@@ -373,8 +400,15 @@ impl X {
             window_menu: false,
         };
         let supported = Self::atom(&x.xl, dpy, "_NET_SUPPORTED");
-        x.window_menu = x.atom_list(root, supported, 4096).contains(&x.atoms.window_menu);
-        Ok(x)
+        x.window_menu = overlay.is_none() && x.atom_list(root, supported, 4096).contains(&x.atoms.window_menu);
+        let place = overlay.map(|o| {
+            let place = overlay::opening_place(&x, o);
+            let (left, top) = overlay::origin(place, w as i32, h as i32);
+            (x.xl.XMoveWindow)(dpy, win, left, top);
+            overlay::set_properties(&x, (left, top), (w as i32, h as i32));
+            place
+        });
+        Ok((x, place))
     }
 
     unsafe fn size(&self) -> (i32, i32) {
@@ -654,6 +688,8 @@ struct XHost {
     placed_at: Option<f64>,
     /// The window's accessibility tree (AT-SPI), when the app asked for it.
     access: Option<crate::access::Bridge>,
+    /// The window is an overlay (`OverlayOptions`).
+    overlay: Option<overlay::Overlay>,
 }
 
 impl runner::Host for XHost {
@@ -676,6 +712,14 @@ impl runner::Host for XHost {
             while (self.x.xl.XPending)(self.x.dpy) > 0 {
                 let mut ev: xlib::XEvent = std::mem::zeroed();
                 (self.x.xl.XNextEvent)(self.x.dpy, &mut ev);
+                if ev.get_type() == xlib::GenericEvent {
+                    if let Some(o) = &mut self.overlay {
+                        if let Some(i) = o.raw_motion(&self.x, &mut ev, self.size) {
+                            ui.input(i);
+                        }
+                    }
+                    continue;
+                }
                 let filtered = (self.x.xl.XFilterEvent)(&mut ev, 0) != 0;
                 // The input method's callbacks ran inside Xlib: their preedit, in order with
                 // the keys and commits around it.
@@ -705,6 +749,12 @@ impl runner::Host for XHost {
                         self.placed_at.get_or_insert(self.now());
                         if c.width > 0 && c.height > 0 {
                             resized = Some((c.width, c.height));
+                            if let Some(o) = &mut self.overlay {
+                                if let Some(p) = o.configured(&self.x, (c.width, c.height)) {
+                                    ui.window.place = Some(p);
+                                    ui.events.push(crate::Event::Moved);
+                                }
+                            }
                         }
                     }
                     xlib::Expose => ui.tree.expose(),
@@ -896,6 +946,18 @@ impl runner::Host for XHost {
                 }
                 set_title(&x.xl, x.dpy, x.win, &x.atoms, t);
             }
+            if let Some(o) = &mut self.overlay {
+                if let Some((w, h)) = req.size {
+                    let k = ui.tree.scale();
+                    let size = ((w * k).round() as i32, (h * k).round() as i32);
+                    if size != self.size {
+                        o.set_size(x, size.0, size.1);
+                    }
+                }
+                if let Some(on) = req.click_through {
+                    o.set_click_through(x, on);
+                }
+            }
         }
     }
 
@@ -952,6 +1014,9 @@ impl runner::Host for XHost {
 
     fn renew_backend(&mut self) -> bool {
         let (x, size, backend) = (&self.x, self.size, self.backend);
+        if self.overlay.is_some() {
+            return runner::replace_backend(&mut self.be, || transparent_backend(x, size.0, size.1).ok());
+        }
         runner::replace_backend(&mut self.be, || Some(make_backend(backend, x, size.0, size.1)))
     }
 
@@ -969,10 +1034,50 @@ impl runner::Host for XHost {
 }
 
 /// Opens the window and runs `app` until the window closes.
-pub(super) fn run(opts: Options, mut make: impl FnMut(&mut Ui) -> Box<dyn App>) -> Result<(), crate::Error> {
+pub(super) fn run(opts: Options, make: impl FnMut(&mut Ui) -> Box<dyn App>) -> Result<(), crate::Error> {
+    // SAFETY: the module contract.
+    let (x, _) = unsafe { X::open(&opts, None) }.map_err(crate::Error::Platform)?;
+    let access = opts.accessibility.then_some(opts.title);
+    host_loop(x, opts.backend, access, None, make)
+}
+
+/// Opens an overlay (`OverlayOptions`) and runs `app` in it until it closes. `Err` when the
+/// display has no transparent window to give (no 32-bit visual, no Vulkan surface composing
+/// alpha).
+pub(super) fn run_overlay(
+    opts: OverlayOptions,
+    make: impl FnOnce(&mut Ui) -> Box<dyn App>,
+) -> Result<(), crate::Error> {
+    let main = Options {
+        title: opts.title.clone(),
+        width: opts.width.round().max(1.0) as i32,
+        height: opts.height.round().max(1.0) as i32,
+        min_width: 1,
+        min_height: 1,
+        backend: opts.backend,
+        accessibility: false,
+    };
+    // SAFETY: the module contract.
+    let (x, place) = unsafe { X::open(&main, Some(&opts)) }.map_err(crate::Error::Platform)?;
+    let mut o = overlay::Overlay::new(place.expect("an overlay is opened at a place"));
+    if opts.click_through {
+        // SAFETY: the module contract.
+        unsafe { o.set_click_through(&x, true) };
+    }
+    host_loop(x, opts.backend, None, Some(o), make)
+}
+
+/// Runs the app in a window opened (`run`, `run_overlay`) until it closes: `access`, the title
+/// its accessibility tree is named by (none: no tree).
+fn host_loop(
+    x: X,
+    backend: super::BackendKind,
+    access: Option<String>,
+    overlay: Option<overlay::Overlay>,
+    make: impl FnOnce(&mut Ui) -> Box<dyn App>,
+) -> Result<(), crate::Error> {
     // SAFETY: the module contract.
     unsafe {
-        let x = X::open(&opts).map_err(crate::Error::Platform)?;
         let mut fds = [0 as c_int; 2];
         // Unchecked, a failed pipe left `fds` at 0: the flags and the final close hit stdin.
         super::linux::wake_pipe(&mut fds).map_err(|e| crate::Error::Platform(format!("wake pipe: {e}")))?;
@@ -980,18 +1085,34 @@ pub(super) fn run(opts: Options, mut make: impl FnMut(&mut Ui) -> Box<dyn App>) 
         let waker = HostWake { fd: fds[1], pending: pending.clone() };
         let scale = dpi_scale(&x.xl, x.dpy);
         let (cw, ch) = x.size();
-        let be = make_backend(opts.backend, &x, cw, ch);
+        let be = match overlay {
+            Some(_) => match transparent_backend(&x, cw, ch) {
+                Ok(be) => be,
+                Err(e) => {
+                    libc::close(fds[0]);
+                    libc::close(fds[1]);
+                    return Err(crate::Error::Platform(format!("an overlay needs a transparent window: {e}")));
+                }
+            },
+            None => make_backend(backend, &x, cw, ch),
+        };
         let mut ui = Ui::new(cw, ch, scale);
         ui.window.handle = x.win as isize;
+        if let Some(o) = &overlay {
+            ui.window.place = Some(o.place);
+            let work = overlay::work_area(&x);
+            ui.window.work_area = Some((work.w as f32 / scale, work.h as f32 / scale));
+        }
         let task_waker = waker.clone();
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || task_waker.wake());
         ui.set_task_wake(wake.clone());
         let mut app = make(&mut ui);
         let randr = x11_dl::xrandr::Xrandr::open().ok();
+        let is_overlay = overlay.is_some();
         let mut host = XHost {
             x,
             be,
-            backend: opts.backend,
+            backend,
             t0: Instant::now(),
             fds,
             pending,
@@ -1005,10 +1126,13 @@ pub(super) fn run(opts: Options, mut make: impl FnMut(&mut Ui) -> Box<dyn App>) 
             sync_value: None,
             randr,
             placed_at: None,
-            access: opts.accessibility.then(|| super::linux::access(wake.clone(), opts.title.clone())),
+            access: access.map(|title| super::linux::access(wake.clone(), title)),
+            overlay,
         };
         runner::start(&mut host, &mut ui, app.as_mut());
-        kde_shadow(&host.x, scale);
+        if !is_overlay {
+            kde_shadow(&host.x, scale);
+        }
         (host.x.xl.XMapWindow)(host.x.dpy, host.x.win);
         (host.x.xl.XFlush)(host.x.dpy);
 

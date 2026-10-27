@@ -99,7 +99,11 @@ pub(crate) fn turn<H: Host + ?Sized>(host: &mut H, ui: &mut Ui, app: &mut dyn Ap
         a.requests(ui);
     }
     deliver(ui, app, pacer.period);
-    let req = std::mem::take(&mut ui.window.req);
+    let mut req = std::mem::take(&mut ui.window.req);
+    if ui.window.place.is_some() {
+        // An overlay is never minimised, maximised (a caption's double click) or fullscreen.
+        (req.minimize, req.toggle_maximize, req.fullscreen) = (false, false, None);
+    }
     if req.close {
         host.close();
         ui.turn_end(host.visible());

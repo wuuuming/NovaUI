@@ -64,6 +64,8 @@ wayland-client = { version = "=0.31.15", features = ["system"] }
 wayland-backend = { version = "=0.3.17", features = ["client_system", "dlopen"] }
 wayland-protocols = { version = "=0.32.13", features = ["client", "staging", "unstable"] }
 wayland-protocols-plasma = { version = "=0.3.12", features = ["client"] }
+# Overlays as layer surfaces (`zwlr_layer_shell_v1`: KWin, wlroots compositors).
+wayland-protocols-wlr = { version = "=0.3.12", features = ["client"] }
 wayland-cursor = "=0.31.14"
 xkbcommon-dl = "=0.4.2"
 

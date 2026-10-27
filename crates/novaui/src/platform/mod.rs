@@ -61,10 +61,10 @@ impl Window {
     pub fn fullscreen(&self) -> bool {
         self.fullscreen
     }
-    /// It has a border: neither maximized nor fullscreen (the tree draws its edge, and the
-    /// resize border is there).
+    /// It has a border: neither maximized nor fullscreen, nor an overlay (the tree draws its
+    /// edge, and the resize border is there).
     pub(crate) fn framed(&self) -> bool {
-        !self.maximized && !self.fullscreen
+        !self.maximized && !self.fullscreen && self.place.is_none()
     }
     /// The window has the keyboard.
     pub fn focused(&self) -> bool {
@@ -301,8 +301,16 @@ pub fn run_overlay(
     opts: OverlayOptions,
     make: impl FnOnce(&mut crate::app::Ui) -> Box<dyn App>,
 ) -> Result<(), crate::Error> {
-    let _ = (opts, make);
-    Err(crate::Error::Platform("overlays are not made on this host yet".into()))
+    crate::text::check_fonts()?;
+    // A layer surface where the compositor has the layer shell; else through XWayland (GNOME).
+    let make = match wayland::wanted() {
+        true => match wayland::run_overlay(&opts, make) {
+            Ok(()) => return Ok(()),
+            Err(make) => make,
+        },
+        false => make,
+    };
+    x11::run_overlay(opts, make)
 }
 
 /// The refresh rate to pace turns and tickers by: what the display reports (Win32's display
