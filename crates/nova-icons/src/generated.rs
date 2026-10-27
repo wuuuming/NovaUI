@@ -96,6 +96,11 @@ use crate::{IconEntry, MasterEntry, OutlineEntry, Variant};
 /// | `TextFont` | U+F001F | Text Font | Regular | 16/20/24 | own 24-grid ink box | Settings: the font card. |
 /// | `LocalLanguage` | U+F0020 | Local Language | Regular | 16/20/24 | own 24-grid ink box | Settings: the language card. |
 /// | `Keyboard` | U+F0021 | Keyboard | Regular | 16/20/24 | own 24-grid ink box | Settings: the keyboard navigation card. |
+/// | `LockClosed` | U+F0022 | Lock Closed | Regular | 16/20/24 | own 24-grid ink box | Overlays: lock in place (clicks pass through). |
+/// | `LockOpen` | U+F0023 | Lock Open | Regular | 16/20/24 | own 24-grid ink box | Overlays: unlocked. |
+/// | `FontIncrease` | U+F0024 | Font Increase | Regular | 20/24 | own 24-grid ink box | Larger text. |
+/// | `FontDecrease` | U+F0025 | Font Decrease | Regular | 20/24 | own 24-grid ink box | Smaller text. |
+/// | `SlideText` | U+F0026 | Slide Text | Regular | 16/20/24 | own 24-grid ink box | Text shown on the desktop (desktop lyrics). |
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum Icon {
@@ -277,11 +282,21 @@ pub enum Icon {
     LocalLanguage,
     /// Fluent `Keyboard` Regular; key U+F0021. Settings: the keyboard navigation card.
     Keyboard,
+    /// Fluent `Lock Closed` Regular; key U+F0022. Overlays: lock in place (clicks pass through).
+    LockClosed,
+    /// Fluent `Lock Open` Regular; key U+F0023. Overlays: unlocked.
+    LockOpen,
+    /// Fluent `Font Increase` Regular; key U+F0024. Larger text.
+    FontIncrease,
+    /// Fluent `Font Decrease` Regular; key U+F0025. Smaller text.
+    FontDecrease,
+    /// Fluent `Slide Text` Regular; key U+F0026. Text shown on the desktop (desktop lyrics).
+    SlideText,
 }
 
 impl Icon {
     /// Every icon, in manifest order.
-    pub const ALL: [Icon; 89] = [
+    pub const ALL: [Icon; 94] = [
         Icon::Navigation,
         Icon::WeatherSunny,
         Icon::WeatherMoon,
@@ -371,10 +386,15 @@ impl Icon {
         Icon::TextFont,
         Icon::LocalLanguage,
         Icon::Keyboard,
+        Icon::LockClosed,
+        Icon::LockOpen,
+        Icon::FontIncrease,
+        Icon::FontDecrease,
+        Icon::SlideText,
     ];
 }
 
-pub(crate) static ICONS: [IconEntry; 89] = [
+pub(crate) static ICONS: [IconEntry; 94] = [
     IconEntry {
         name: "Navigation",
         key: '\u{E700}',
@@ -1176,10 +1196,55 @@ pub(crate) static ICONS: [IconEntry; 89] = [
         outline: 86,
         place: [0.0833333358168602, 0.2083333283662796, 0.91650390625, 0.7918294072151184],
     },
+    IconEntry {
+        name: "LockClosed",
+        key: '\u{F0022}',
+        key_str: "\u{F0022}",
+        fluent: "Lock Closed",
+        variant: Variant::Regular,
+        outline: 87,
+        place: [0.1666666716337204, 0.0416666679084301, 0.8333333134651184, 0.9166666865348816],
+    },
+    IconEntry {
+        name: "LockOpen",
+        key: '\u{F0023}',
+        key_str: "\u{F0023}",
+        fluent: "Lock Open",
+        variant: Variant::Regular,
+        outline: 88,
+        place: [0.1666666716337204, 0.0416666679084301, 0.9791666865348816, 0.9166666865348816],
+    },
+    IconEntry {
+        name: "FontIncrease",
+        key: '\u{F0024}',
+        key_str: "\u{F0024}",
+        fluent: "Font Increase",
+        variant: Variant::Regular,
+        outline: 89,
+        place: [0.22917066514492035, 0.0832926407456398, 0.9166589379310608, 0.8333293199539185],
+    },
+    IconEntry {
+        name: "FontDecrease",
+        key: '\u{F0025}',
+        key_str: "\u{F0025}",
+        fluent: "Font Decrease",
+        variant: Variant::Regular,
+        outline: 90,
+        place: [0.22917066514492035, 0.0833410695195198, 0.9166589379310608, 0.8333293199539185],
+    },
+    IconEntry {
+        name: "SlideText",
+        key: '\u{F0026}',
+        key_str: "\u{F0026}",
+        fluent: "Slide Text",
+        variant: Variant::Regular,
+        outline: 91,
+        place: [0.0833333358168602, 0.1666666716337204, 0.9166666865348816, 0.8333333134651184],
+    },
 ];
 
 /// `(key, icon)` sorted by key, for `Icon::from_key`.
-pub(crate) static KEYS: [(char, Icon); 89] = [
+pub(crate) static KEYS: [(char, Icon); 94] = [
     ('\u{E700}', Icon::Navigation),
     ('\u{E706}', Icon::WeatherSunny),
     ('\u{E708}', Icon::WeatherMoon),
@@ -1269,9 +1334,14 @@ pub(crate) static KEYS: [(char, Icon); 89] = [
     ('\u{F001F}', Icon::TextFont),
     ('\u{F0020}', Icon::LocalLanguage),
     ('\u{F0021}', Icon::Keyboard),
+    ('\u{F0022}', Icon::LockClosed),
+    ('\u{F0023}', Icon::LockOpen),
+    ('\u{F0024}', Icon::FontIncrease),
+    ('\u{F0025}', Icon::FontDecrease),
+    ('\u{F0026}', Icon::SlideText),
 ];
 
-pub(crate) static OUTLINES: [OutlineEntry; 87] = [
+pub(crate) static OUTLINES: [OutlineEntry; 92] = [
     OutlineEntry { first_master: 0, masters: 3 },   // Navigation regular
     OutlineEntry { first_master: 3, masters: 3 },   // Weather Sunny regular
     OutlineEntry { first_master: 6, masters: 3 },   // Weather Moon regular
@@ -1359,9 +1429,14 @@ pub(crate) static OUTLINES: [OutlineEntry; 87] = [
     OutlineEntry { first_master: 225, masters: 3 }, // Text Font regular
     OutlineEntry { first_master: 228, masters: 3 }, // Local Language regular
     OutlineEntry { first_master: 231, masters: 3 }, // Keyboard regular
+    OutlineEntry { first_master: 234, masters: 3 }, // Lock Closed regular
+    OutlineEntry { first_master: 237, masters: 3 }, // Lock Open regular
+    OutlineEntry { first_master: 240, masters: 2 }, // Font Increase regular
+    OutlineEntry { first_master: 242, masters: 2 }, // Font Decrease regular
+    OutlineEntry { first_master: 244, masters: 3 }, // Slide Text regular
 ];
 
-pub(crate) static MASTERS: [MasterEntry; 234] = [
+pub(crate) static MASTERS: [MasterEntry; 247] = [
     MasterEntry { design: 16, verbs: 0, verb_len: 24, points: 0, point_len: 45, ink: [2.0, 3.0, 14.0, 12.0] }, // ic_fluent_navigation_16_regular.svg
     MasterEntry { design: 20, verbs: 24, verb_len: 24, points: 45, point_len: 45, ink: [2.0, 4.0, 18.0, 15.0] }, // ic_fluent_navigation_20_regular.svg
     MasterEntry {
@@ -2688,4 +2763,45 @@ pub(crate) static MASTERS: [MasterEntry; 234] = [
         point_len: 170,
         ink: [2.0, 5.0, 21.99609375, 19.00390625],
     }, // ic_fluent_keyboard_24_regular.svg
+    MasterEntry { design: 16, verbs: 8009, verb_len: 36, points: 15362, point_len: 64, ink: [3.0, 1.0, 13.0, 15.0] }, // ic_fluent_lock_closed_16_regular.svg
+    MasterEntry { design: 20, verbs: 8045, verb_len: 36, points: 15426, point_len: 64, ink: [4.0, 1.0, 16.0, 18.0] }, // ic_fluent_lock_closed_20_regular.svg
+    MasterEntry { design: 24, verbs: 8081, verb_len: 36, points: 15490, point_len: 64, ink: [4.0, 1.0, 20.0, 22.0] }, // ic_fluent_lock_closed_24_regular.svg
+    MasterEntry { design: 16, verbs: 8117, verb_len: 37, points: 15554, point_len: 70, ink: [3.0, 1.0, 15.0, 15.0] }, // ic_fluent_lock_open_16_regular.svg
+    MasterEntry { design: 20, verbs: 8154, verb_len: 37, points: 15624, point_len: 70, ink: [4.0, 1.0, 19.0, 18.0] }, // ic_fluent_lock_open_20_regular.svg
+    MasterEntry { design: 24, verbs: 8191, verb_len: 37, points: 15694, point_len: 70, ink: [4.0, 1.0, 23.5, 22.0] }, // ic_fluent_lock_open_24_regular.svg
+    MasterEntry {
+        design: 20,
+        verbs: 8228,
+        verb_len: 31,
+        points: 15764,
+        point_len: 50,
+        ink: [5.0010199546813965, 2.0009765625, 17.9990234375, 15.998980522155762],
+    }, // ic_fluent_font_increase_20_regular.svg
+    MasterEntry {
+        design: 24,
+        verbs: 8259,
+        verb_len: 29,
+        points: 15814,
+        point_len: 48,
+        ink: [5.500096321105957, 1.9990234375, 21.999814987182617, 19.99990463256836],
+    }, // ic_fluent_font_increase_24_regular.svg
+    MasterEntry {
+        design: 20,
+        verbs: 8288,
+        verb_len: 31,
+        points: 15862,
+        point_len: 50,
+        ink: [5.0010199546813965, 2.0009765625, 17.9990234375, 15.998980522155762],
+    }, // ic_fluent_font_decrease_20_regular.svg
+    MasterEntry {
+        design: 24,
+        verbs: 8319,
+        verb_len: 29,
+        points: 15912,
+        point_len: 48,
+        ink: [5.500096321105957, 2.00018572807312, 21.999814987182617, 19.99990463256836],
+    }, // ic_fluent_font_decrease_24_regular.svg
+    MasterEntry { design: 16, verbs: 8348, verb_len: 44, points: 15960, point_len: 79, ink: [1.0, 3.0, 15.0, 13.0] }, // ic_fluent_slide_text_16_regular.svg
+    MasterEntry { design: 20, verbs: 8392, verb_len: 44, points: 16039, point_len: 79, ink: [2.0, 4.0, 18.0, 16.0] }, // ic_fluent_slide_text_20_regular.svg
+    MasterEntry { design: 24, verbs: 8436, verb_len: 44, points: 16118, point_len: 79, ink: [2.0, 4.0, 22.0, 20.0] }, // ic_fluent_slide_text_24_regular.svg
 ];

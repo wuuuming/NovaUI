@@ -104,3 +104,8 @@ ArrowDownFilled	F001E	Arrow Down	filled	native	Sort direction: descending.
 TextFont	F001F	Text Font	regular	native	Settings: the font card.
 LocalLanguage	F0020	Local Language	regular	native	Settings: the language card.
 Keyboard	F0021	Keyboard	regular	native	Settings: the keyboard navigation card.
+LockClosed	F0022	Lock Closed	regular	native	Overlays: lock in place (clicks pass through).
+LockOpen	F0023	Lock Open	regular	native	Overlays: unlocked.
+FontIncrease	F0024	Font Increase	regular	native	Larger text.
+FontDecrease	F0025	Font Decrease	regular	native	Smaller text.
+SlideText	F0026	Slide Text	regular	native	Text shown on the desktop (desktop lyrics).
