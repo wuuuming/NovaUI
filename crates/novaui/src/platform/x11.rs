@@ -81,6 +81,9 @@ struct X {
     pres_size: (i32, i32),
     /// The window manager answers `_GTK_SHOW_WINDOW_MENU` (KWin, Mutter, Xfwm list it).
     window_menu: bool,
+    /// An overlay's ARGB visual, and the backend it was asked for.
+    argb: Option<*mut xlib::Visual>,
+    backend: super::BackendKind,
 }
 
 /// Software presentation on X11: the reference rasterizer, its damage put with XPutImage.
@@ -114,6 +117,9 @@ struct SoftwareX11 {
         c_int,
     ) -> *mut xlib::XImage,
     visual: *mut xlib::Visual,
+    /// 24 (the default visual's), or 32 for an overlay's ARGB window: the canvas's premultiplied
+    /// 0xAARRGGBB is what that visual takes.
+    depth: c_uint,
     flush: unsafe extern "C" fn(*mut xlib::Display) -> c_int,
 }
 
@@ -157,11 +163,12 @@ impl Backend for SoftwareX11 {
         // SAFETY: the module contract; the image borrows the canvas's w×h pixels for this call only
         // (detached before it is destroyed), and each put is clipped to the canvas.
         unsafe {
-            // A 24-bit TrueColor visual stores 0x00RRGGBB little-endian: the canvas's own layout.
+            // A 24-bit TrueColor visual stores 0x00RRGGBB little-endian, a 32-bit one 0xAARRGGBB:
+            // the canvas's own layout.
             let img = (self.create)(
                 self.dpy,
                 self.visual,
-                24,
+                self.depth,
                 xlib::ZPixmap,
                 0,
                 c.px.as_mut_ptr() as *mut c_char,
@@ -214,21 +221,46 @@ fn make_backend(kind: super::BackendKind, x: &X, w: i32, h: i32) -> Box<dyn Back
             put: x.xl.XPutImage,
             create: x.xl.XCreateImage,
             visual: (x.xl.XDefaultVisual)(x.dpy, screen),
+            depth: 24,
             flush: x.xl.XFlush,
         })
     }
 }
 
-/// An overlay's backend: Vulkan composing the canvas's alpha. `Err` where it cannot (no Vulkan,
-/// a surface that composes no alpha): the software path puts opaque pixels.
+/// An overlay's backend: Vulkan composing the canvas's alpha, else (no Vulkan, a surface that
+/// composes no alpha: NVIDIA's) the software canvas put on the ARGB window as it is.
 fn transparent_backend(x: &X, w: i32, h: i32) -> Result<Box<dyn Backend>, String> {
-    let mut v = crate::render::vulkan::Vulkan::new(w, h)?;
-    v.set_transparent(true);
-    v.attach(crate::render::vulkan::Window::Xlib { display: x.dpy as *mut _, window: x.pres }, w, h)?;
-    if !v.composes_alpha() {
-        return Err("the Vulkan surface composes no alpha".into());
+    let vulkan = || -> Result<Box<dyn Backend>, String> {
+        let mut v = crate::render::vulkan::Vulkan::new(w, h)?;
+        v.set_transparent(true);
+        v.attach(crate::render::vulkan::Window::Xlib { display: x.dpy as *mut _, window: x.pres }, w, h)?;
+        if !v.composes_alpha() {
+            return Err("the Vulkan surface composes no alpha".into());
+        }
+        Ok(Box::new(v))
+    };
+    if x.backend != super::BackendKind::Software {
+        match vulkan() {
+            Ok(be) => return Ok(be),
+            Err(e) => eprintln!("novaui: overlay: {e}; software presentation"),
+        }
     }
-    Ok(Box::new(v))
+    let visual = x.argb.ok_or("no 32-bit visual")?;
+    // SAFETY: the module contract; the GC is the window's (its depth), freed with the display.
+    unsafe {
+        (x.xl.XUnmapWindow)(x.dpy, x.pres);
+        Ok(Box::new(SoftwareX11 {
+            sw: crate::render::software::Software::new(w, h),
+            dpy: x.dpy,
+            win: x.win,
+            gc: (x.xl.XCreateGC)(x.dpy, x.win, 0, std::ptr::null_mut()),
+            put: x.xl.XPutImage,
+            create: x.xl.XCreateImage,
+            visual,
+            depth: 32,
+            flush: x.xl.XFlush,
+        }))
+    }
 }
 
 /// A `w`×`h` window under `parent` taking `events`, with no background and NorthWest bit gravity.
@@ -398,6 +430,8 @@ impl X {
             pres,
             pres_size,
             window_menu: false,
+            argb: argb.map(|(v, _)| v),
+            backend: opts.backend,
         };
         let supported = Self::atom(&x.xl, dpy, "_NET_SUPPORTED");
         x.window_menu = overlay.is_none() && x.atom_list(root, supported, 4096).contains(&x.atoms.window_menu);
