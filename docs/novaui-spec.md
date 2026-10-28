@@ -219,9 +219,11 @@ Column #face { align: center; gap: 16;
   punctuation kept with what it closes), chars are every non-space char; a span cut into several
   units shares its time by its chars (spaces take none). `u-translate: x, y` (dips), `u-scale`
   (`s` or `sx, sy`) and `u-rotate` (degrees clockwise), both about the unit's centre,
-  `u-opacity`, `u-fg` and `u-glow: radius, colour[, strength]` (a halo under the unit: its
+  `u-opacity`, `u-fg`, `u-glow: radius, colour[, strength]` (a halo under the unit: its
   glyphs blurred once per whole-px radius and kept in the atlas, drawn under every glyph of the
-  text; animate its strength, not its radius) are expressions evaluated once per unit,
+  text; animate its strength, not its radius) and `u-outline: width, colour[, strength]` (a crisp
+  border: the glyphs grown by the width in whole px, anti-aliased, kept and drawn like the glow,
+  over it) are expressions evaluated once per unit,
   reading `unit.i unit.n unit.t0 unit.t1 unit.dur unit.age unit.p unit.hash unit.start unit.end`
   (`p`: <0 waiting, 0..1 sung, >1 passed; `hash`: a stable 0..1 from the index; `start`, `end`:
   the whole text's) and the bindings. Pure helpers for
@@ -230,7 +232,7 @@ Column #face { align: center; gap: 16;
   (no frame state). A unit's look is a function of time, never of frames drawn. Guards: the
   expressions run only when the text, its `units`/`timing`/`time` or what they read changed;
   every value is clamped where it enters paint (not finite → the default, moved at most one
-  line, scale 0.5–2, turned ±45°, opacity 0–1, glow 0–16); at most 512 units (more: drawn plain); paint
+  line, scale 0.5–2, turned ±45°, opacity 0–1, glow 0–16, outline 0–8); at most 512 units (more: drawn plain); paint
   only (layout never moves). A unit at rest is its crisp `Glyph`s as laid out; moved, scaled or
   turned it is `GlyphXf`s: the glyph through an affine map, sampled bilinear (with the sweep),
   so it glides by fractions of a pixel and settles without stepping. `text-rotate` (degrees

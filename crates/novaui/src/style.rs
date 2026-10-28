@@ -219,6 +219,10 @@ pub struct UnitFx {
     /// alpha the halo's strength, times the unit's).
     pub glow: f32,
     pub glow_fg: Color,
+    /// A crisp border round the unit's glyphs: its width in dips (whole pixels; 0: none) and
+    /// colour (its alpha times the unit's).
+    pub outline: f32,
+    pub outline_fg: Color,
 }
 
 impl UnitFx {
@@ -226,7 +230,8 @@ impl UnitFx {
     pub const MAX_UNITS: usize = 512;
 
     /// Within paint's bounds (`line`: the text's line height in dips): not finite → the
-    /// default, moved at most a line, scale 0.5–2, turned ±45°, opacity 0–1, glow 0–16. A broken style degrades, never
+    /// default, moved at most a line, scale 0.5–2, turned ±45°, opacity 0–1, glow 0–16, outline
+    /// 0–8. A broken style degrades, never
     /// blows up.
     pub fn clamped(self, line: f32) -> UnitFx {
         let ok = |v: f32, d: f32, lo: f32, hi: f32| if v.is_finite() { v.clamp(lo, hi) } else { d };
@@ -240,6 +245,8 @@ impl UnitFx {
             fg: self.fg.filter(|c| c.iter().all(|v| v.is_finite())),
             glow: ok(self.glow, 0.0, 0.0, 16.0),
             glow_fg: if self.glow_fg.iter().all(|v| v.is_finite()) { self.glow_fg } else { [0.0; 4] },
+            outline: ok(self.outline, 0.0, 0.0, 8.0),
+            outline_fg: if self.outline_fg.iter().all(|v| v.is_finite()) { self.outline_fg } else { [0.0; 4] },
         }
     }
 }
@@ -256,6 +263,8 @@ impl Default for UnitFx {
             fg: None,
             glow: 0.0,
             glow_fg: [0.0; 4],
+            outline: 0.0,
+            outline_fg: [0.0; 4],
         }
     }
 }

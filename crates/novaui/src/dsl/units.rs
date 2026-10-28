@@ -1,5 +1,5 @@
 //! A text's units, each drawn by the `u-*` expressions (`u-translate`, `u-scale`, `u-opacity`,
-//! `u-fg`) evaluated once per unit with `unit.*` set: `i n t0 t1 dur age p hash start end`. Pure: a unit's
+//! `u-fg`, `u-rotate`, `u-glow`, `u-outline`) evaluated once per unit with `unit.*` set: `i n t0 t1 dur age p hash start end`. Pure: a unit's
 //! look is a function of its timing, its index and the time now (`time`), never of frames drawn.
 //! Evaluated only when what they read changed: the text, its `units` / `timing` / `time`, or a
 //! binding, let or latch an expression names.
@@ -12,12 +12,12 @@ use crate::style::{UnitFx, UnitSrc, Units};
 use crate::{Id, Ui};
 
 /// The `u-*` properties, in `UnitProg::fx` order.
-pub(super) const PROPS: [&str; 6] = ["u-translate", "u-scale", "u-opacity", "u-fg", "u-rotate", "u-glow"];
+pub(super) const PROPS: [&str; 7] = ["u-translate", "u-scale", "u-opacity", "u-fg", "u-rotate", "u-glow", "u-outline"];
 
 /// One text's `u-*` expressions and what they read.
 pub(super) struct UnitProg {
     pub(super) id: Id,
-    fx: [Option<Val>; 6],
+    fx: [Option<Val>; 7],
     names: Vec<String>,
     binds: Vec<String>,
     /// Evaluate again at the next update.
@@ -176,7 +176,7 @@ impl Doc {
             let mut ev = self.evaluator(0, Some(vars));
             let sheet = ev.sheet;
             let mut eval = |v: &Val| ev.val(v);
-            let [tr, sc, op, fg, rot, glow] = &p.fx;
+            let [tr, sc, op, fg, rot, glow, outline] = &p.fx;
             let mut fx = UnitFx::default();
             if let Some(v) = tr {
                 match eval(v) {
@@ -209,15 +209,18 @@ impl Doc {
             if let Some(v) = fg {
                 fx.fg = resolve_color(sheet, &eval(v));
             }
-            if let Some(v) = glow {
-                // `radius, colour` or `radius, colour, strength` (times the colour's alpha).
-                if let Val::List(l) = eval(v) {
-                    if let (Some(r), Some(c)) = (l.first(), l.get(1).and_then(|c| resolve_color(sheet, c))) {
-                        fx.glow = num(r, sheet);
-                        fx.glow_fg = c;
-                        fx.glow_fg[3] *= l.get(2).map_or(1.0, |a| num(a, sheet));
-                    }
-                }
+            // `size, colour` or `size, colour, strength` (times the colour's alpha).
+            let mut halo = |v: &Option<Val>| -> Option<(f32, crate::Color)> {
+                let Val::List(l) = eval(v.as_ref()?) else { return None };
+                let (r, mut c) = (l.first()?, l.get(1).and_then(|c| resolve_color(sheet, c))?);
+                c[3] *= l.get(2).map_or(1.0, |a| num(a, sheet));
+                Some((num(r, sheet), c))
+            };
+            if let Some((r, c)) = halo(glow) {
+                (fx.glow, fx.glow_fg) = (r, c);
+            }
+            if let Some((w, c)) = halo(outline) {
+                (fx.outline, fx.outline_fg) = (w, c);
             }
             out.chars.push(r);
             out.fx.push(fx.clamped(line));

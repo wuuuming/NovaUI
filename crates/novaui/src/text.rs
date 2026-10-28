@@ -177,8 +177,46 @@ impl Key {
     }
 }
 
-/// A glyph slot's key (family, face, glyph, size step, phase) and a halo's radius.
-type GlowKey = ((u8, u8, u32, u32, u8), u8);
+/// A glyph slot's key (family, face, glyph, size step, phase), a halo's radius and kind.
+type GlowKey = ((u8, u8, u32, u32, u8), u8, Halo);
+
+/// What a unit's halo is (`Text::halo_slot`): a soft glow (`u-glow`) or a crisp border
+/// (`u-outline`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Halo {
+    Glow,
+    Outline,
+}
+
+/// `src` (`w` by `h` coverage) grown by `r` px: each pixel the most of `src` within `r` of it,
+/// a pixel reaching as far as its edge (half a pixel past its centre), so the border fades over
+/// the pixel past `r` (an anti-aliased edge).
+fn grown(src: &[f32], w: i32, h: i32, r: i32) -> Vec<f32> {
+    let reach = r as f32 + 1.0;
+    let mut taps = Vec::new();
+    for dy in -r..=r {
+        for dx in -r..=r {
+            let k = (reach - ((dx * dx + dy * dy) as f32).sqrt()).clamp(0.0, 1.0);
+            if k > 0.0 {
+                taps.push((dx, dy, k));
+            }
+        }
+    }
+    let mut out = vec![0f32; src.len()];
+    for y in 0..h {
+        for x in 0..w {
+            let mut v = 0f32;
+            for &(dx, dy, k) in &taps {
+                let (sx, sy) = (x + dx, y + dy);
+                if (0..w).contains(&sx) && (0..h).contains(&sy) {
+                    v = v.max(src[(sy * w + sx) as usize] * k);
+                }
+            }
+            out[(y * w + x) as usize] = v;
+        }
+    }
+    out
+}
 
 #[derive(Clone, Copy)]
 struct Slot {
@@ -313,7 +351,7 @@ impl Text {
     /// unit at rest is the crisp glyph laid out. Scaled, a glyph is rastered at the nearest
     /// whole-px size (an animated scale adds a few atlas sizes, not one per frame) and the rest
     /// of the scale is the map's. A glowing unit has a halo under every glyph of the text (its
-    /// glyph blurred once, `glow_slot`); `turn` (degrees clockwise, about the text's centre plus
+    /// glyph blurred once, `halo_slot`) and an outlined one a border (the glyph grown); `turn` (degrees clockwise, about the text's centre plus
     /// an origin in px) turns the whole text after.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn prims_units(
@@ -380,6 +418,9 @@ impl Text {
             let ks = sweep.map_or(0.0, |s| s.at - c as f32);
             let glow = (fx.glow * k).round() as i32;
             let glowing = glow > 0 && fx.glow_fg[3] * unlit[3] > 1.0 / 255.0;
+            let outline = (fx.outline * k).round() as i32;
+            let outlined = outline > 0 && fx.outline_fg[3] * unlit[3] > 1.0 / 255.0;
+            let glowing = glowing || outlined;
             let moved = u.is_some() && !still(&fx);
             let s = p.src[j];
             if !moved && !turned && !glowing {
@@ -415,11 +456,16 @@ impl Text {
                 ([gpos.0, gpos.1], [1.0, 0.0, 0.0, 1.0])
             };
             let (o, m) = place(o, m);
-            if glowing {
-                if let Some(h) = self.glow_slot(s.fam, s.face, s.id, q, phase, glow.min(32)) {
-                    let g = glow.min(32) as f32;
+            // The glow, then the border over it, both under every glyph.
+            for (r, fg, kind) in [(glow, fx.glow_fg, Halo::Glow), (outline, fx.outline_fg, Halo::Outline)] {
+                if r <= 0 || fg[3] * unlit[3] <= 1.0 / 255.0 {
+                    continue;
+                }
+                let r = r.min(32);
+                if let Some(h) = self.halo_slot(s.fam, s.face, s.id, q, phase, r, kind) {
+                    let g = r as f32;
                     let ho = [o[0] - (m[0] + m[2]) * g, o[1] - (m[1] + m[3]) * g];
-                    let mut hc = fx.glow_fg;
+                    let mut hc = fg;
                     hc[3] *= unlit[3];
                     let halo = Prim::GlyphXf { o: ho, m, uv: h.uv, color: hc, lit: hc, sweep: 0.0 };
                     if clip.intersects(&halo.bounds()) {
@@ -441,11 +487,13 @@ impl Text {
         }
     }
 
-    /// A glyph's slot blurred by `r` px (two box passes each way, about a gaussian of radius
-    /// `r`), its cell grown by `r` on every side: a halo (`prims_units`), rastered once.
+    /// A glyph's halo (`prims_units`), its cell grown by `r` px on every side, rastered once: a
+    /// glow is the glyph blurred by `r` (two box passes each way, about a gaussian of radius `r`);
+    /// an outline is the glyph grown by `r` (each pixel the most of the glyph within `r` of it,
+    /// its edge anti-aliased), a border once the glyph is drawn over it.
     #[allow(clippy::too_many_arguments)]
-    fn glow_slot(&mut self, fam: u8, face: u8, id: GlyphId, q: u32, phase: u8, r: i32) -> Option<Slot> {
-        let key: GlowKey = ((fam, face, id.0 as u32, q, phase), r as u8);
+    fn halo_slot(&mut self, fam: u8, face: u8, id: GlyphId, q: u32, phase: u8, r: i32, kind: Halo) -> Option<Slot> {
+        let key: GlowKey = ((fam, face, id.0 as u32, q, phase), r as u8, kind);
         if let Some(&s) = self.glows.get(&key) {
             return self.hit(s);
         }
@@ -457,6 +505,10 @@ impl Text {
                 let v = self.atlas[((base.uv.y + yy) * ATLAS + base.uv.x + xx) as usize];
                 buf[((yy + r) * w + xx + r) as usize] = v as f32;
             }
+        }
+        if kind == Halo::Outline {
+            buf = grown(&buf, w, h, r);
+            return self.keep_halo(key, &buf, w, h, 1.0, base, r);
         }
         // Box blur of radius b, twice each way.
         let b = (r / 2).max(1);
@@ -487,11 +539,17 @@ impl Text {
             pass(&buf, &mut tmp, horizontal);
             std::mem::swap(&mut buf, &mut tmp);
         }
+        // Brighter than the glyph's average: a halo, not a shadow.
+        self.keep_halo(key, &buf, w, h, 2.0, base, r)
+    }
+
+    /// A halo's coverage `buf` (`w` by `h`, times `gain`) written into the atlas and kept under `key`.
+    #[allow(clippy::too_many_arguments)]
+    fn keep_halo(&mut self, key: GlowKey, buf: &[f32], w: i32, h: i32, gain: f32, base: Slot, r: i32) -> Option<Slot> {
         let slot = self.alloc(w, h).map(|(ox, oy)| {
             for yy in 0..h {
                 for xx in 0..w {
-                    // Brighter than the glyph's average: a halo, not a shadow.
-                    let v = (buf[(yy * w + xx) as usize] * 2.0).min(255.0);
+                    let v = (buf[(yy * w + xx) as usize] * gain).min(255.0);
                     self.atlas[((oy + yy) * ATLAS + ox + xx) as usize] = (v + 0.5) as u8;
                 }
             }
@@ -802,7 +860,7 @@ pub struct Text {
     font: Option<String>,
     pub(crate) atlas: Vec<u8>,
     slots: HashMap<(u8, u8, u32, u32, u8), Option<Slot>>,
-    /// Glyph halos (`glow_slot`): a slot's key and the blur's radius.
+    /// Glyph halos (`halo_slot`): a slot's key, the halo's radius and kind.
     glows: HashMap<GlowKey, Option<Slot>>,
     icons: HashMap<IconKey, Option<Slot>>,
     /// Vector shapes by (digest, px).
@@ -2177,6 +2235,23 @@ mod scripts {
 }
 
 #[cfg(test)]
+mod outline {
+    /// A border is the glyph grown: every pixel within its width of the glyph is covered
+    /// whole, the next one partly, past it nothing.
+    #[test]
+    fn a_glyph_grows_by_the_outline_width() {
+        let (w, h) = (9, 9);
+        let mut src = vec![0f32; 81];
+        src[4 * 9 + 4] = 255.0;
+        let out = super::grown(&src, w, h, 2);
+        let at = |x: i32, y: i32| out[(y * w + x) as usize];
+        assert_eq!(at(4, 4), 255.0);
+        assert_eq!((at(6, 4), at(4, 2)), (255.0, 255.0), "two pixels out, whole");
+        assert!(at(6, 6) > 0.0 && at(6, 6) < 255.0, "the corner, partly: {}", at(6, 6));
+        assert_eq!((at(7, 4), at(8, 8)), (0.0, 0.0), "past the width, nothing");
+    }
+}
+
 mod halo_count {
     /// A halo written into the atlas counts as rasterized, as `TextCounts::rasterized` says (it
     /// was uploaded without being counted); one already kept does not count again.
@@ -2198,9 +2273,9 @@ mod halo_count {
         let q = super::size_step(st.size);
         assert!(t.slot(s.fam, s.face, s.id, q, 0).is_some());
         let before = t.stats_rasterized;
-        assert!(t.glow_slot(s.fam, s.face, s.id, q, 0, 4).is_some());
+        assert!(t.halo_slot(s.fam, s.face, s.id, q, 0, 4, super::Halo::Glow).is_some());
         assert_eq!(t.stats_rasterized, before + 1, "the halo");
-        assert!(t.glow_slot(s.fam, s.face, s.id, q, 0, 4).is_some());
+        assert!(t.halo_slot(s.fam, s.face, s.id, q, 0, 4, super::Halo::Glow).is_some());
         assert_eq!(t.stats_rasterized, before + 1, "kept: nothing rasterized again");
     }
 }
