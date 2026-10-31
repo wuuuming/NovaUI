@@ -86,4 +86,8 @@ pub struct Semantics {
     pub range: Option<Range>,
     /// Its name is announced whenever it changes (a live region: the song now playing).
     pub live: bool,
+    /// One of a set of which one is chosen (a dropdown's rows, a menu's choices): whether it is
+    /// the one. A menu item with it is announced as a radio item, checked or not; its check mark
+    /// is only its look.
+    pub checked: Option<bool>,
 }

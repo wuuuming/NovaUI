@@ -28,6 +28,10 @@ pub enum Ease {
     /// Smoothstep, t²(3 − 2t): the lane's page turn.
     Smooth,
     Bezier(f32, f32, f32, f32),
+    /// An ease-out that starts at speed `r` (in distances per duration, 0 to 3) and comes to
+    /// rest at its end: 1 − (1 − t)²(1 + (2 − r)t). A motion turned to a new end mid-way takes it
+    /// on at the speed it had (`Glide`); `Carry(3.0)` is `OutCubic`, `Carry(0.0)` a smoothstep.
+    Carry(f32),
 }
 
 /// What an exit leaves at its end (`Tree::exit`).
@@ -122,19 +126,29 @@ impl Tween {
     }
 
     /// Heads for `to` from where it stands at `now` (no jump), over `dur` on `ease`. A tween
-    /// already heading there keeps going as it was.
+    /// already heading there keeps going as it was. Turned back mid-way toward where it came
+    /// from, it takes the time it already went, not a whole `dur` (a toggle flipped back crawled
+    /// home over the full duration: it read as lag), as the declarative `tween` retraces.
     pub fn retarget(&mut self, to: f32, now: f64, dur: f64, ease: Ease) {
         if to == self.to {
             return;
         }
+        let span = (self.to - self.from).abs();
+        let back = !self.done(now) && span > 0.0 && (to - self.from).abs() <= 1e-3 * span.max(1.0);
+        let dur = if back { (now - self.t0).clamp(0.0, dur) } else { dur };
         *self = Tween { from: self.at(now), to, t0: now, dur, ease };
+    }
+
+    /// Seconds left until it arrives.
+    pub fn left(&self, now: f64) -> f64 {
+        (self.t0 + self.dur - now).max(0.0)
     }
 }
 
-/// How a scroll offset moves to a new end: WinUI's offset change (ScrollPresenter's position
-/// animation, microsoft-ui-xaml `ScrollPresenter.h`): 5 ms per dip travelled, held between 50 ms
-/// and 1 s, on Fluent's "fast out, slow in" curve (`Ease::Decelerate`); a new end mid-way starts
-/// again from where it stands. Quick wheel notches the same way go further. `Default` is WinUI's.
+/// How a scroll offset moves to a new end: a time that follows the distance travelled, held
+/// between `min` and `max`, on an ease-out; a new end mid-way is taken on from where it stands at
+/// the speed it has (`Glide::to`). Quick wheel notches the same way go further. `Default` is
+/// `STANDARD`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlideSkin {
     /// Seconds per dip of distance, held between `min` and `max`.
@@ -150,12 +164,14 @@ pub struct GlideSkin {
 }
 
 impl GlideSkin {
-    /// WinUI's: 5 ms a dip, 50 ms to 1 s, decelerating; up to three notches' worth.
-    pub const WINUI: GlideSkin = GlideSkin {
-        per_dip: 0.005,
-        min: 0.05,
-        max: 1.0,
-        ease: Ease::Decelerate,
+    /// 3 ms a dip (a notch of 48 dips in 144 ms), 80 to 400 ms, on a cubic ease-out; up to
+    /// three notches' worth. WinUI's offset change (5 ms a dip, 50 ms to 1 s, on
+    /// `Ease::Decelerate`) was this once: its long slow tail read as lagging the wheel.
+    pub const STANDARD: GlideSkin = GlideSkin {
+        per_dip: 0.003,
+        min: 0.08,
+        max: 0.4,
+        ease: Ease::OutCubic,
         accel: 3.0,
         accel_window: 0.14,
         accel_step: 1.35,
@@ -164,7 +180,7 @@ impl GlideSkin {
 
 impl Default for GlideSkin {
     fn default() -> Self {
-        GlideSkin::WINUI
+        GlideSkin::STANDARD
     }
 }
 
@@ -202,7 +218,9 @@ impl Glide {
 
     /// Heads for `to` from where it stands at `now`, over a time that follows the distance. A
     /// glide already heading there (within half a dip) keeps going as it was; one standing there
-    /// settles on it.
+    /// settles on it. One already moving that way takes the new end on at the speed it has
+    /// (`Ease::Carry`), sooner if that speed would carry it past: quick wheel notches make one
+    /// even motion, not a lurch at each (a fresh `skin.ease` from each starts fast every time).
     pub fn to(&mut self, to: f32, now: f64, skin: GlideSkin) {
         if (to - self.tween.to).abs() <= 0.5 {
             if self.done(now) {
@@ -211,8 +229,30 @@ impl Glide {
             return;
         }
         let from = self.at(now);
-        let dur = ((to - from).abs() as f64 * skin.per_dip).clamp(skin.min, skin.max);
+        let mut dur = ((to - from).abs() as f64 * skin.per_dip).clamp(skin.min, skin.max);
+        let v = self.speed(now);
+        let way = to - from;
+        if v != 0.0 && v.signum() == way.signum() && way.abs() > 0.5 {
+            // Its speed in distances per duration; past 3 it would overshoot: arrive sooner.
+            let mut r = (f64::from(v) * dur / f64::from(way)) as f32;
+            if r > 3.0 {
+                dur = (3.0 * f64::from(way) / f64::from(v)).max(1e-3);
+                r = 3.0;
+            }
+            self.tween = Tween::new(from, to, now, dur, Ease::Carry(r));
+            return;
+        }
         self.tween = Tween::new(from, to, now, dur, skin.ease);
+    }
+
+    /// Its speed at `now`, dips a second (0 standing).
+    pub fn speed(&self, now: f64) -> f32 {
+        if self.done(now) {
+            return 0.0;
+        }
+        const H: f64 = 1e-3;
+        let (a, b) = (self.tween.at(now), self.tween.at(now + H));
+        ((b - a) as f64 / H) as f32
     }
 
     /// Stands at `v` at once.
@@ -307,6 +347,10 @@ impl Ease {
             Ease::InOutCubic => 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0,
             Ease::Smooth => t * t * (3.0 - 2.0 * t),
             Ease::Bezier(a, b, c, d) => bezier(a, b, c, d, t),
+            Ease::Carry(r) => {
+                let a = 2.0 - r.clamp(0.0, 3.0);
+                1.0 - (1.0 - t) * (1.0 - t) * (1.0 + a * t)
+            }
         }
     }
 }
@@ -322,21 +366,67 @@ impl Anim {
 mod tests {
     use super::*;
 
+    /// Turned back toward where it came from, a tween takes the time it went (a toggle flipped
+    /// back crawled home over the whole duration); sent on elsewhere it takes the whole time.
+    #[test]
+    fn a_tween_turned_back_takes_back_the_time_it_went() {
+        let mut t = Tween::new(0.0, 100.0, 1.0, 0.3, Ease::OutCubic);
+        let there = t.at(1.1);
+        t.retarget(0.0, 1.1, 0.3, Ease::OutCubic);
+        assert!((t.at(1.1) - there).abs() < 1e-4, "it turns where it stands");
+        assert!((t.left(1.1) - 0.1).abs() < 1e-9, "back in the 0.1 s it went: {}", t.left(1.1));
+        assert!(t.at(1.2).abs() < 1e-4, "home: {}", t.at(1.2));
+        let mut t = Tween::new(0.0, 100.0, 1.0, 0.3, Ease::OutCubic);
+        t.retarget(50.0, 1.1, 0.3, Ease::OutCubic);
+        assert!((t.left(1.1) - 0.3).abs() < 1e-9, "a new end: the whole time");
+        let mut t = Tween::new(0.0, 100.0, 1.0, 0.3, Ease::OutCubic);
+        t.retarget(0.0, 2.0, 0.3, Ease::OutCubic);
+        assert!((t.left(2.0) - 0.3).abs() < 1e-9, "arrived: back is a whole new motion");
+    }
+
     #[test]
     fn a_glide_takes_longer_the_further_it_goes_within_its_bounds_and_turns_without_a_jump() {
         let skin = GlideSkin::default();
         let mut g = Glide::rest(0.0);
         g.to(100.0, 0.0, skin);
-        assert!(!g.done(0.49) && g.done(0.5), "100 dips at 5 ms a dip");
+        assert!(!g.done(0.29) && g.done(0.3), "100 dips at 3 ms a dip");
         g.to(105.0, 1.0, skin);
-        assert!(g.done(1.05) && !g.done(1.049), "never under 50 ms");
+        assert!(g.done(1.08) && !g.done(1.079), "never under 80 ms");
         let mut far = Glide::rest(0.0);
         far.to(10_000.0, 0.0, skin);
-        assert!(far.done(1.0), "never over a second");
+        assert!(far.done(0.4) && !far.done(0.39), "never over 400 ms");
         let at = far.at(0.3);
         far.to(0.0, 0.3, skin);
         assert_eq!(far.at(0.3), at, "a new end starts from where it stands");
         assert_eq!(far.target(), 0.0);
+    }
+
+    /// Wheel notches 30 ms apart (a quick spin): one even motion. Each notch used to start a
+    /// fresh fast-out curve, so the speed lurched up at every notch and sagged between them, the
+    /// text seen stepping. Taken on at the speed it has, the speed never jumps by much.
+    #[test]
+    fn quick_notches_make_one_even_motion() {
+        let skin = GlideSkin::default();
+        let mut g = Glide::rest(0.0);
+        let (mut t, mut worst, mut last_v) = (0.0, 0.0f32, 0.0f32);
+        for _ in 0..12 {
+            g.wheel(-48.0, t, 0.0, 1e6, skin);
+            let v = g.speed(t + 0.002);
+            if t > 0.1 {
+                worst = worst.max((v - last_v).abs() / last_v.max(1.0));
+            }
+            for k in 1..=30 {
+                last_v = g.speed(t + k as f64 * 1e-3);
+            }
+            t += 0.03;
+        }
+        assert!(worst < 0.5, "the speed jumps by {:.0} % at a notch", worst * 100.0);
+        // Still a fast start from rest, and it gets there.
+        let mut one = Glide::rest(0.0);
+        one.wheel(-48.0, 10.0, 0.0, 1e6, skin);
+        assert!(one.at(10.016) > 12.0, "one notch moves at once (a quarter in a 60 Hz frame): {}", one.at(10.016));
+        assert!(one.done(10.3) && (one.at(10.3) - 48.0).abs() < 0.01);
+        assert!(g.target() > 12.0 * 48.0, "quick notches build speed: {}", g.target());
     }
 
     #[test]

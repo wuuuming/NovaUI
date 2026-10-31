@@ -34,8 +34,27 @@ fn key(bytes: &[u8], fit: Fit) -> Key {
     (digest, bytes.len(), fit)
 }
 
+/// The largest side a picture may say it has (px): larger than any picture shown, and every
+/// real cover or photo. A larger one is refused from its header, before its pixels are made.
+const MAX_SIDE: u32 = 16_384;
+/// The most a decode may allocate (bytes): a 64-megapixel picture in RGBA.
+const MAX_ALLOC: u64 = 256 << 20;
+
+/// `bytes` decoded within `MAX_SIDE` and `MAX_ALLOC`; `None` when they are not a picture or say
+/// they are a larger one. (The crate's default stops at 512 MB a decode and at no size.) For an
+/// app that decodes pictures from outside itself (a file, the network) to re-encode them.
+pub fn load(bytes: &[u8]) -> Option<image::DynamicImage> {
+    let mut r = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_alloc = Some(MAX_ALLOC);
+    r.limits(limits);
+    r.decode().ok()
+}
+
 fn decode_uncached(bytes: &[u8], fit: Fit) -> Option<ImageHandle> {
-    let img = image::load_from_memory(bytes).ok()?;
+    let img = load(bytes)?;
     let img = fitted(img, fit)?;
     let rgba = img.into_rgba8();
     let (w, h) = (rgba.width(), rgba.height());
@@ -64,7 +83,7 @@ fn fitted(img: image::DynamicImage, fit: Fit) -> Option<image::DynamicImage> {
 /// the picture shows as SDR.
 fn gain_map(bytes: &[u8], w: u32, h: u32, fit: Fit) -> Option<super::gainmap::Gain> {
     let (meta, jpeg) = super::gainmap::find(bytes)?;
-    let g = image::load_from_memory(jpeg).ok()?;
+    let g = load(jpeg)?;
     let gray = g.color().channel_count() < 3;
     // The same fit at the gain map's own scale keeps its crop the picture's; then to the size.
     let (gw, gh) = (g.width(), g.height());
@@ -198,5 +217,28 @@ mod tests {
         let px = sq.hdr_pixels(4.0).unwrap();
         let at = |x: usize| crate::image::gainmap::f32_of(px[(4 * 8 + x) * 4]);
         assert!(at(0) < 0.8 && at(7) > 1.0, "{} {}", at(0), at(7));
+    }
+
+    /// A picture that says it is larger than any picture shown is refused before its pixels
+    /// are made: a broken or hostile cover (a few bytes of PNG claiming 20000x20000) once
+    /// decoded into hundreds of MB on a task thread before it was shrunk to its 1040 px.
+    #[test]
+    fn a_picture_larger_than_any_shown_is_refused_before_it_is_decoded() {
+        let png = |w: u32, h: u32| {
+            let mut out = Vec::new();
+            let enc = image::codecs::png::PngEncoder::new(&mut out);
+            image::ImageEncoder::write_image(enc, &vec![0u8; (w * h) as usize], w, h, image::ExtendedColorType::L8)
+                .unwrap();
+            out
+        };
+        assert!(decode_uncached(&png(64, 32), Fit::Within(1040)).is_some(), "an ordinary picture");
+        let side = MAX_SIDE + 1;
+        let tall = png(1, side);
+        assert!(decode_uncached(&tall, Fit::Within(1040)).is_none(), "{side} px tall: refused");
+        // Its header alone says so: refused without decoding its rows.
+        let mut lying = png(4, 4);
+        lying[16..20].copy_from_slice(&20_000u32.to_be_bytes());
+        lying[20..24].copy_from_slice(&20_000u32.to_be_bytes());
+        assert!(decode_uncached(&lying, Fit::Within(1040)).is_none());
     }
 }

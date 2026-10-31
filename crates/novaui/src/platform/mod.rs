@@ -18,6 +18,8 @@ pub struct Window {
     pub(crate) place: Option<Place>,
     /// The work area (dips) of the display the window is on, where the host knows it.
     pub(crate) work_area: Option<(f32, f32)>,
+    /// An ordinary window's place and size as the host last saw them (`Bounds`).
+    pub(crate) bounds: Option<Bounds>,
 }
 
 /// The system changed the window's maximized state: recorded, and the layout follows at once.
@@ -46,6 +48,7 @@ impl Default for Window {
             req: Requests::default(),
             place: None,
             work_area: None,
+            bounds: None,
         }
     }
 }
@@ -110,6 +113,43 @@ impl Window {
     /// display less its panels), where the host knows it.
     pub fn work_area(&self) -> Option<(f32, f32)> {
         self.work_area
+    }
+    /// Where an ordinary window stands and how big it is (`Bounds`), to keep and hand back the
+    /// next time it opens (`Options::bounds`); `None` for an overlay or where the host cannot
+    /// tell. `Event::Moved` says it changed.
+    pub fn bounds(&self) -> Option<Bounds> {
+        self.bounds
+    }
+}
+
+/// An ordinary window's place and size, in the host's own measure of the screen (Windows' and
+/// X11's desktop pixels; Wayland gives a size only, `x` and `y` are 0): the rectangle it has when
+/// neither maximized nor minimized, and whether it is maximized. It means nothing to the app: it
+/// is kept and handed back (`Options::bounds`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub maximized: bool,
+}
+
+impl Bounds {
+    /// As text (`x y width height maximized`), to keep in a file.
+    pub fn text(&self) -> String {
+        format!("{} {} {} {} {}", self.x, self.y, self.width, self.height, u8::from(self.maximized))
+    }
+
+    /// From `text`; `None` when it is not one (or not a usable size).
+    pub fn parse(text: &str) -> Option<Bounds> {
+        let v: Vec<i32> = text.split_whitespace().map(|p| p.parse().ok()).collect::<Option<_>>()?;
+        match v.as_slice() {
+            &[x, y, width, height, m] if width > 0 && height > 0 && (m == 0 || m == 1) => {
+                Some(Bounds { x, y, width, height, maximized: m == 1 })
+            }
+            _ => None,
+        }
     }
 }
 
@@ -186,10 +226,15 @@ pub struct Options {
     /// Screen readers can read and operate the window (UI Automation, AT-SPI; `access.rs`).
     /// False: no adapter is made and the system's asks go unanswered.
     pub accessibility: bool,
+    /// Where it stood when it last closed (`Window::bounds`): it opens there, maximized if it
+    /// was, if that place is still on a display (enough of it to reach), else at `width` ×
+    /// `height` where the system puts a new window. Wayland takes the size and maximized only.
+    pub bounds: Option<Bounds>,
 }
 
-/// Which renderer the window draws with. Windows has all three; Linux Vulkan and software (its
-/// Wayland host Vulkan only); one a system cannot give falls back to the next it can.
+/// Which renderer the window draws with. Windows has D3D11 and software; Linux Vulkan and
+/// software (its Wayland host Vulkan only); one a system cannot give falls back to the next it
+/// can.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BackendKind {
     /// The system's own: D3D11 on Windows, Vulkan on Linux.
@@ -205,7 +250,8 @@ impl BackendKind {
     pub fn parse(name: &str) -> Option<BackendKind> {
         Some(match name {
             "d3d11" => BackendKind::D3d11,
-            "vk" => BackendKind::Vulkan,
+            // Windows has no Vulkan renderer (`render::vulkan`): asked for, it is not there.
+            "vk" if !cfg!(windows) => BackendKind::Vulkan,
             "sw" => BackendKind::Software,
             _ => return None,
         })

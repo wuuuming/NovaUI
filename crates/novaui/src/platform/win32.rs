@@ -301,6 +301,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         }
         WM_NCLBUTTONDOWN if wp.0 == HTMAXBUTTON as usize => {
             let pt = to_client(hwnd, lp);
+            push(Msg::In(Input::Mods(mods())));
             push(Msg::In(Input::Down(pt.x, pt.y, MouseButton::Left)));
             return LRESULT(0);
         }
@@ -325,6 +326,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         // WM_NCLBUTTONDBLCLK: the app's press and release, then Windows' maximize toggle.
         WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK if wp.0 == HTCAPTION as usize => {
             let pt = to_client(hwnd, lp);
+            push(Msg::In(Input::Mods(mods())));
             push(Msg::In(Input::Down(pt.x, pt.y, MouseButton::Left)));
             step_now();
             let r = default_proc(hwnd, msg, wp, lp);
@@ -338,6 +340,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         WM_NCRBUTTONDOWN | WM_NCRBUTTONUP if wp.0 == HTCAPTION as usize => {
             let pt = to_client(hwnd, lp);
             let down = msg == WM_NCRBUTTONDOWN;
+            if down {
+                push(Msg::In(Input::Mods(mods())));
+            }
             push(Msg::In(if down {
                 Input::Down(pt.x, pt.y, MouseButton::Right)
             } else {
@@ -434,6 +439,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             let (x, y) = xy(lp);
             // SAFETY: a handle, on the window's thread.
             unsafe { SetCapture(hwnd) };
+            push(Msg::In(Input::Mods(mods())));
             push(Msg::In(Input::Down(
                 x,
                 y,
@@ -754,15 +760,6 @@ fn make_backend(
             Err(e) => eprintln!("novaui: DirectComposition target: {e}; presenting through the window"),
         }
     }
-    if kind == super::BackendKind::Vulkan {
-        if let Ok(mut v) = crate::render::vulkan::Vulkan::new(w, h) {
-            // SAFETY: None asks for this executable's module; no pointer is passed.
-            let hi = unsafe { GetModuleHandleW(None).map(|m| m.0 as isize).unwrap_or(0) };
-            if v.attach(crate::render::vulkan::Window::Win32 { hinstance: hi, hwnd: hwnd.0 as isize }, w, h).is_ok() {
-                return Box::new(v);
-            }
-        }
-    }
     if kind != super::BackendKind::Software {
         if let Ok(mut d) = crate::render::d3d11::D3d11::new(w, h) {
             if d.attach(hwnd, w, h).is_ok() {
@@ -869,12 +866,30 @@ fn mark_fullscreen(hwnd: HWND, on: bool) {
 /// Opens the window and runs `app` until the window closes. `Err` when no window could be had,
 /// or no font loads.
 pub fn run(opts: Options, make: impl FnMut(&mut Ui) -> Box<dyn App>) -> Result<(), crate::Error> {
-    crate::text::check_fonts()?;
-    let pre = composed(opts.backend, false);
+    // The device's programs compile beside the font check and the driver's start.
+    if matches!(opts.backend, super::BackendKind::Default | super::BackendKind::D3d11) {
+        crate::render::d3d11::warm();
+    }
+    // The fonts are found (their own threads read the font folders) while the device is made:
+    // neither waits for the other; no window opens without a font.
+    let (fonts, pre) = std::thread::scope(|s| {
+        let fonts = std::thread::Builder::new()
+            .name("novaui-fonts".into())
+            .spawn_scoped(s, crate::text::check_fonts)
+            .map_err(|_| ());
+        let pre = composed(opts.backend, false);
+        let fonts = match fonts {
+            Ok(h) => h.join().unwrap_or_else(|_| crate::text::check_fonts()),
+            Err(()) => crate::text::check_fonts(),
+        };
+        (fonts, pre)
+    });
+    fonts?;
     let composition = pre.is_some();
     let hwnd = open_window(&opts, composition).map_err(crate::Error::Platform)?;
+    let bounds = opts.bounds.filter(reachable);
     let accessibility = opts.accessibility.then_some(opts.title);
-    host_loop(Made { hwnd, pre, backend: opts.backend, accessibility, place: None }, make)
+    host_loop(Made { hwnd, pre, backend: opts.backend, accessibility, place: None, bounds }, make)
 }
 
 /// Opens an overlay (`OverlayOptions`) and runs `app` in it on this thread until it closes.
@@ -885,7 +900,8 @@ pub fn run_overlay(opts: OverlayOptions, make: impl FnOnce(&mut Ui) -> Box<dyn A
     let no_alpha = || crate::Error::Platform("an overlay needs DirectComposition (a transparent window)".into());
     let pre = composed(opts.backend, true).ok_or_else(no_alpha)?;
     let (hwnd, place) = overlay::open(&opts).map_err(crate::Error::Platform)?;
-    let made = Made { hwnd, pre: Some(pre), backend: opts.backend, accessibility: None, place: Some(place) };
+    let made =
+        Made { hwnd, pre: Some(pre), backend: opts.backend, accessibility: None, place: Some(place), bounds: None };
     let result = host_loop(made, make);
     overlay::unhook();
     result
@@ -899,11 +915,14 @@ struct Made {
     backend: super::BackendKind,
     accessibility: Option<String>,
     place: Option<super::Place>,
+    /// The bounds it was made at (`Options::bounds`, when reachable): a window made maximized
+    /// has them as the rectangle it restores to.
+    bounds: Option<super::Bounds>,
 }
 
 /// Runs the app in a window made (`run`, `run_overlay`) until it closes.
 fn host_loop(made: Made, make: impl FnOnce(&mut Ui) -> Box<dyn App>) -> Result<(), crate::Error> {
-    let Made { hwnd, pre, backend, accessibility, place } = made;
+    let Made { hwnd, pre, backend, accessibility, place, bounds: made_bounds } = made;
     let overlay = place.is_some();
     let composition = pre.is_some();
     let (cw, ch) = client(hwnd);
@@ -945,6 +964,10 @@ fn host_loop(made: Made, make: impl FnOnce(&mut Ui) -> Box<dyn App>) -> Result<(
     let mut ui = Ui::new(cw, ch, scale);
     ui.window.handle = hwnd.0 as isize;
     ui.window.place = place;
+    if !overlay {
+        ui.window.maximized = is_zoomed(hwnd);
+        ui.window.bounds = bounds_of(hwnd, made_bounds);
+    }
     ui.window.work_area = overlay::work_area(hwnd);
     ui.set_task_wake(wake);
 
@@ -961,19 +984,43 @@ fn host_loop(made: Made, make: impl FnOnce(&mut Ui) -> Box<dyn App>) -> Result<(
     RUNNER.with(|r| *r.borrow_mut() = Some(Runner { host, ui, app, pacer: Pacer::new(refresh_hz(hwnd)) }));
 
     let mut quit = false;
+    let sleep = LoopSleep::new();
+    // What starting touched once (the app's files read, fonts parsed, the first images) stays in
+    // the working set while nothing asks the system for memory: about as much again as a running
+    // window needs. Once started, at the first wait after `STARTED`, it goes back (`trim_working_set`);
+    // what the window and the app use comes back as they touch it. Minimised, the window trims
+    // as it goes down (`Msg::Size`), and again `SETTLED` after the app's work grew it by `GREW`
+    // (a player's next song: its picture decoded, its lines built, the list saved), so a window
+    // left minimised for hours keeps only what goes on running.
+    const STARTED: std::time::Duration = std::time::Duration::from_secs(8);
+    const SETTLED: std::time::Duration = std::time::Duration::from_secs(2);
+    const GREW: usize = 4 << 20;
+    let mut start_trim = (!overlay).then(|| Instant::now() + STARTED);
+    // What the window keeps touching comes back after a trim: the level `SETTLED` after it (an
+    // overlay still drawing, the sound) is what growth is measured from, or every few seconds
+    // would trim the same pages again.
+    let mut settled = usize::MAX;
+    let mut settle_at: Option<Instant> = None;
     while !quit {
-        let timeout = RUNNER.with(|r| {
+        let mut timeout = RUNNER.with(|r| {
             let g = r.borrow();
             let r = g.as_ref().expect("the runner is installed before this loop and taken after it");
             // Pending paint is retained while minimized, but is not runnable work.
             let can_draw = runner::Host::visible(&r.host);
-            r.pacer
-                .timeout_ms(&r.ui, runner::Host::now(&r.host), can_draw, queued())
-                .unwrap_or(windows::Win32::System::Threading::INFINITE)
+            r.pacer.timeout(&r.ui, runner::Host::now(&r.host), can_draw, queued())
         });
-        if timeout > 0 {
-            // SAFETY: no handles (None); waits on this thread's message queue.
-            unsafe { MsgWaitForMultipleObjectsEx(None, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+        if let Some(at) = start_trim {
+            let left = at.saturating_duration_since(Instant::now()).as_secs_f64();
+            if left <= 0.0 && timeout != Some(0.0) {
+                trim_working_set();
+                settle_at = Some(Instant::now() + SETTLED);
+                start_trim = None;
+            } else {
+                timeout = Some(timeout.map_or(left, |t| t.min(left)));
+            }
+        }
+        if timeout != Some(0.0) {
+            sleep.until_message(timeout);
         }
         let mut msg = MSG::default();
         // SAFETY: `msg` is a live local, filled by PeekMessageW and read back by the dispatch;
@@ -991,6 +1038,17 @@ fn host_loop(made: Made, make: impl FnOnce(&mut Ui) -> Box<dyn App>) -> Result<(
             break;
         }
         step_now();
+        if !overlay && start_trim.is_none() && is_iconic(hwnd) {
+            let (now, ws) = (Instant::now(), working_set());
+            if MINIMIZE_TRIMMED.with(|t| t.take()) {
+                settle_at = Some(now + SETTLED);
+            } else if settle_at.is_some_and(|t| now >= t) {
+                settle_at = None;
+                settled = ws;
+            } else if settle_at.is_none() && ws > settled.saturating_add(GREW) {
+                start_trim = Some(now + SETTLED);
+            }
+        }
     }
     let r = RUNNER.with(|r| r.borrow_mut().take());
     if let Some(r) = r {
@@ -1048,6 +1106,70 @@ pub(super) fn monitor_of(hwnd: HWND) -> HMONITOR {
     unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) }
 }
 
+thread_local! {
+    /// The window trimmed as it went down (`Msg::Size`); the loop measures its settled level.
+    static MINIMIZE_TRIMMED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The process's working set, bytes.
+fn working_set() -> usize {
+    use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
+    use windows::Win32::System::Threading::GetCurrentProcess;
+    let mut m =
+        PROCESS_MEMORY_COUNTERS { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32, ..Default::default() };
+    // SAFETY: the pseudo-handle of this process and a live local of the size given.
+    let _ = unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut m, m.cb) };
+    m.WorkingSetSize
+}
+
+/// Hands the process's working set back to the system (its pages stay committed and come back
+/// on first touch, from the standby list).
+fn trim_working_set() {
+    use windows::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+    // SAFETY: the pseudo-handle of this process, and the (-1, -1) pair the call documents for
+    // emptying the working set.
+    let _ = unsafe { SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX) };
+}
+
+/// Kept bounds a window can open at: its top strip (where it is dragged from) lies on a
+/// display's work area by at least 120 × 32 pixels, and it is no bigger than that display.
+fn reachable(b: &super::Bounds) -> bool {
+    let r = RECT { left: b.x, top: b.y, right: b.x + b.width, bottom: b.y + b.height };
+    // SAFETY: a live local rectangle and structure with its size set.
+    unsafe {
+        let mon = MonitorFromRect(&r, MONITOR_DEFAULTTONULL);
+        if mon.is_invalid() {
+            return false;
+        }
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(mon, &mut mi).as_bool() {
+            return false;
+        }
+        let wa = mi.rcWork;
+        let strip = RECT { left: r.left, top: r.top, right: r.right, bottom: r.top + 32 };
+        let (l, t) = (strip.left.max(wa.left), strip.top.max(wa.top));
+        let (rr, bb) = (strip.right.min(wa.right), strip.bottom.min(wa.bottom));
+        let m = mi.rcMonitor;
+        rr - l >= 120 && bb - t >= 16 && b.width <= m.right - m.left && b.height <= m.bottom - m.top
+    }
+}
+
+/// The window's bounds now (`Window::bounds`): its rectangle while neither maximized nor
+/// minimized, else the one it had (`was`), with whether it is maximized.
+fn bounds_of(hwnd: HWND, was: Option<super::Bounds>) -> Option<super::Bounds> {
+    let maximized = is_zoomed(hwnd);
+    if is_iconic(hwnd) {
+        return was;
+    }
+    if maximized {
+        return was.map(|b| super::Bounds { maximized: true, ..b });
+    }
+    let mut r = RECT::default();
+    // SAFETY: a handle and a live local rectangle.
+    unsafe { GetWindowRect(hwnd, &mut r) }.ok()?;
+    Some(super::Bounds { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top, maximized: false })
+}
+
 /// Registers the window class and creates the (hidden) window: per-monitor DPI, COM on this
 /// thread, dark caption, Windows 11 corners and edge, DWM's shadow, file drops.
 fn open_window(opts: &Options, composition: bool) -> Result<HWND, String> {
@@ -1074,26 +1196,24 @@ fn open_window(opts: &Options, composition: bool) -> Result<HWND, String> {
         RegisterClassW(&wc);
         MIN_SIZE.with(|m| *m.borrow_mut() = (opts.min_width, opts.min_height));
         let title = wide(&opts.title);
-        // Size in dips at the primary monitor's DPI; WM_DPICHANGED corrects it on another monitor.
-        let dpi = GetDpiForSystem().max(96);
-        let (w, h) = (opts.width * dpi as i32 / 96, opts.height * dpi as i32 / 96);
+        // Where it last stood, made there (so on that display, at its DPI: no WM_DPICHANGED
+        // rescales it), maximized if it was; else the size in dips at the primary monitor's DPI,
+        // where the system puts a new window (WM_DPICHANGED corrects it on another monitor).
+        let (style, (x, y, w, h)) = match opts.bounds.filter(reachable) {
+            Some(b) => {
+                let max = if b.maximized { WS_MAXIMIZE } else { WINDOW_STYLE(0) };
+                (WS_OVERLAPPEDWINDOW | max, (b.x, b.y, b.width, b.height))
+            }
+            None => {
+                let dpi = GetDpiForSystem().max(96);
+                let (w, h) = (opts.width * dpi as i32 / 96, opts.height * dpi as i32 / 96);
+                (WS_OVERLAPPEDWINDOW, (CW_USEDEFAULT, CW_USEDEFAULT, w, h))
+            }
+        };
         // A composited window has no redirection surface: DirectComposition draws all of it.
         let ex = if composition { WS_EX_NOREDIRECTIONBITMAP } else { WINDOW_EX_STYLE(0) };
-        let hwnd = CreateWindowExW(
-            ex,
-            w!("NovaUI"),
-            PCWSTR(title.as_ptr()),
-            WS_OVERLAPPEDWINDOW,
-            CW_USEDEFAULT,
-            CW_USEDEFAULT,
-            w,
-            h,
-            None,
-            None,
-            hi,
-            None,
-        )
-        .map_err(|e| format!("window: {e}"))?;
+        let hwnd = CreateWindowExW(ex, w!("NovaUI"), PCWSTR(title.as_ptr()), style, x, y, w, h, None, None, hi, None)
+            .map_err(|e| format!("window: {e}"))?;
 
         // Dark caption colours for the (invisible) native frame and the snap previews.
         let dark: i32 = 1;
@@ -1154,6 +1274,8 @@ impl runner::Host for Host {
         let mut resized = None;
         let mut instant_layout = false;
         let mut display_changed = false;
+        let mut moved = false;
+        let mut minimized_now = false;
         for m in msgs {
             match m {
                 Msg::In(i) => {
@@ -1163,7 +1285,10 @@ impl runner::Host for Host {
                 }
                 Msg::Size(w, h, kind) => match self.window_state.resize(kind, w, h) {
                     SizeUpdate::Ignore => {}
-                    SizeUpdate::Minimized => resized = None,
+                    SizeUpdate::Minimized => {
+                        resized = None;
+                        minimized_now = true;
+                    }
                     SizeUpdate::Apply { width, height, maximized, instant } => {
                         resized = Some((width, height));
                         ui.window.maximized = maximized;
@@ -1184,6 +1309,8 @@ impl runner::Host for Host {
                             ui.window.place = place;
                             ui.events.push(crate::Event::Moved);
                         }
+                    } else {
+                        moved = true;
                     }
                 }
                 Msg::Wake => {
@@ -1192,6 +1319,23 @@ impl runner::Host for Host {
                 Msg::Quit => {
                     ui.window.req.close = true;
                 }
+            }
+        }
+        // Minimized, nothing is drawn until it comes back, and a player plays on for hours so:
+        // the driver lets go of what it keeps for drawing (`trim`: its pools, `IDXGIDevice3::Trim`)
+        // and the process's pages go back to the system (only what keeps running comes back,
+        // the sound's). Windows trimmed a minimized window by itself once; Windows 11 does not.
+        if minimized_now && !self.overlay {
+            self.be.trim();
+            trim_working_set();
+            MINIMIZE_TRIMMED.with(|t| t.set(true));
+        }
+        // An ordinary window's bounds, for the app to keep (`Window::bounds`).
+        if !self.overlay && (moved || resized.is_some()) {
+            let bounds = bounds_of(hwnd, ui.window.bounds);
+            if bounds != ui.window.bounds {
+                ui.window.bounds = bounds;
+                ui.events.push(crate::Event::Moved);
             }
         }
         self.resizing = false;
@@ -1343,9 +1487,15 @@ impl runner::Host for Host {
         if is_iconic(self.hwnd) || gated || pending_viewport {
             return false;
         }
-        // A resize frame is synchronous with the border: it does not wait for the previous
-        // present to retire. Nor does any frame inside the modal loop: waiting there would hold
-        // the border.
+        // A resize frame is synchronous with the border: it is drawn before WM_SIZE returns. It
+        // first waits until the last present retired, though: a border moved faster than the
+        // display refreshes otherwise queued frame after frame, and what the compositor showed
+        // fell that many refreshes behind the window's edge (a strip of desktop inside it).
+        // Holding WM_SIZE that long lets the modal loop gather the moves meanwhile: the next
+        // frame is of the newest size.
+        if self.resizing && !self.be.frame_ready() {
+            self.be.wait_frame();
+        }
         self.be.set_immediate(self.resizing || IN_SIZEMOVE.with(Cell::get));
         true
     }
@@ -1388,6 +1538,53 @@ fn refresh_hz(hwnd: HWND) -> f64 {
         }
     }
     60.0
+}
+
+/// The loop's sleep: until a message comes or `secs` pass, to the microsecond. A timeout given to
+/// `MsgWaitForMultipleObjectsEx` is whole milliseconds served on the system's timer tick (15.6 ms
+/// unless something raised the resolution): a wait for the next refresh (4.2 ms at 240 Hz) slept
+/// 15 ms, three refreshes dropped at every wheel notch. A high-resolution waitable timer (Windows
+/// 10 1803 and later) wakes on time without raising the tick for the whole system; without one
+/// the wait falls back to milliseconds.
+struct LoopSleep(Option<HANDLE>);
+
+impl LoopSleep {
+    fn new() -> LoopSleep {
+        use windows::Win32::System::Threading::*;
+        // SAFETY: no attributes or name; the handle is ours and closed in `Drop`.
+        let h =
+            unsafe { CreateWaitableTimerExW(None, None, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS.0) };
+        LoopSleep(h.ok().filter(|h| !h.is_invalid()))
+    }
+
+    fn until_message(&self, secs: Option<f64>) {
+        use windows::Win32::System::Threading::*;
+        let (Some(timer), Some(s)) = (self.0, secs) else {
+            let ms = secs.map_or(INFINITE, |s| (s * 1000.0).ceil() as u32);
+            // SAFETY: no handles (None); waits on this thread's message queue.
+            unsafe { MsgWaitForMultipleObjectsEx(None, ms, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+            return;
+        };
+        // Relative due time in 100 ns units (negative: relative).
+        let due = -((s * 1e7).round() as i64).max(1);
+        // SAFETY: our timer handle; `due` a live local; no completion routine.
+        if unsafe { SetWaitableTimer(timer, &due, 0, None, None, false) }.is_err() {
+            // SAFETY: as above, without the timer.
+            unsafe { MsgWaitForMultipleObjectsEx(None, (s * 1000.0).ceil() as u32, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+            return;
+        }
+        // SAFETY: one live handle of ours; waits on it and this thread's message queue.
+        unsafe { MsgWaitForMultipleObjectsEx(Some(&[timer]), INFINITE, QS_ALLINPUT, MWMO_INPUTAVAILABLE) };
+    }
+}
+
+impl Drop for LoopSleep {
+    fn drop(&mut self) {
+        if let Some(h) = self.0 {
+            // SAFETY: our own handle, closed once.
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(h) };
+        }
+    }
 }
 
 /// `platform::open` on its thread: the shell's "open" verb.
@@ -1585,5 +1782,42 @@ mod clipboard_tests {
         ended.extend([0, 'x' as u16]);
         assert_eq!(super::unicode_text(&ended), "\u{6B4C}\u{8BCD} lyric");
         assert_eq!(super::unicode_text(&[]), "");
+    }
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::super::Bounds;
+
+    /// Kept bounds open the window only where it can be reached: on a display (a display
+    /// since unplugged, or a rectangle above every one, is not).
+    #[test]
+    fn kept_bounds_open_only_on_a_display() {
+        let primary = Bounds { x: 100, y: 100, width: 800, height: 600, maximized: false };
+        assert!(super::reachable(&primary), "on the primary display");
+        assert!(!super::reachable(&Bounds { x: 100_000, ..primary }), "where no display is");
+        assert!(!super::reachable(&Bounds { y: -5_000, ..primary }), "its top strip off every display");
+        assert!(!super::reachable(&Bounds { width: 100_000, ..primary }), "bigger than the display");
+    }
+}
+
+#[cfg(test)]
+mod loop_tests {
+    /// The loop sleeps to the refresh, not to the system's timer tick: a 2 ms wait (a refresh at
+    /// 480 Hz) ends near 2 ms. On the 15.6 ms default tick it took ~15 ms, and at every wheel
+    /// notch the queue's glide lost three refreshes at 240 Hz.
+    #[test]
+    fn the_loop_sleeps_to_the_microsecond() {
+        let sleep = super::LoopSleep::new();
+        let mut took: Vec<f64> = (0..15)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                sleep.until_message(Some(0.002));
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .collect();
+        took.sort_by(f64::total_cmp);
+        let median = took[took.len() / 2];
+        assert!(median < 5.0, "a 2 ms sleep took {median:.2} ms (median of {took:?})");
     }
 }

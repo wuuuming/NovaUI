@@ -125,6 +125,8 @@ impl Timer {
 
 pub(crate) struct TickerSlot {
     running: Cell<bool>,
+    /// Running, it delivers from this host time on (`Clock::frame_at`); `None`: at once.
+    not_before: Cell<Option<f64>>,
     msg: Message,
     site: Site,
 }
@@ -160,6 +162,8 @@ impl Ticker {
 struct ClockAsks {
     /// A frame was asked for this turn.
     frame: bool,
+    /// A frame was asked for this turn, not before this time (`Clock::frame_at`).
+    frame_at: Option<f64>,
     /// This turn's asks, merged in when the clock is settled.
     ask_at: Option<f64>,
     ask_within: Option<(f64, f64)>,
@@ -221,6 +225,15 @@ impl Clock {
         self.0.asks.borrow_mut().frame = true;
     }
 
+    /// Something moves, but shows nothing new before host time `t` (s): the next frame at or
+    /// after `t` (a motion whose next visible step is further off than a refresh). Asked in every
+    /// turn that wants it, as `frame`; a ticker that waits, held as tickers are while the window
+    /// cannot draw (a deadline, `at`, is served even then).
+    pub fn frame_at(&self, t: f64) {
+        let mut a = self.0.asks.borrow_mut();
+        a.frame_at = Some(earliest(a.frame_at, t));
+    }
+
     /// Look again at host time `t` (s).
     pub fn at(&self, t: f64) {
         let mut a = self.0.asks.borrow_mut();
@@ -256,7 +269,9 @@ impl Clock {
     /// Turns this turn's asks into the ticker and the timer, at `now`.
     fn settle(&self, now: f64) {
         let mut a = self.0.asks.borrow_mut();
-        self.0.ticker.run(std::mem::take(&mut a.frame));
+        let (frame, frame_at) = (std::mem::take(&mut a.frame), a.frame_at.take());
+        self.0.ticker.run(frame || frame_at.is_some());
+        self.0.ticker.0.not_before.set(if frame { None } else { frame_at.filter(|&t| t > now) });
         // The timer fired: the deadlines it served are gone (this turn ran their owner's work).
         if !self.0.timer.armed() {
             a.at = a.at.filter(|&t| t > now);
@@ -751,7 +766,7 @@ impl Sched {
     }
 
     pub(crate) fn ticker(&mut self, msg: Message, site: Site) -> Ticker {
-        let slot = Rc::new(TickerSlot { running: Cell::new(false), msg, site });
+        let slot = Rc::new(TickerSlot { running: Cell::new(false), not_before: Cell::new(None), msg, site });
         register(&mut self.tickers, &slot);
         Ticker(slot)
     }
@@ -872,8 +887,19 @@ impl Sched {
         self.timers.iter().filter_map(|w| w.upgrade()?.due.get().map(|d| d.1)).reduce(f64::min)
     }
 
-    pub(crate) fn ticking(&self) -> bool {
-        self.tickers.iter().any(|w| w.upgrade().is_some_and(|t| t.running.get()))
+    /// A running ticker wants the next frame at `now`.
+    pub(crate) fn ticking(&self, now: f64) -> bool {
+        self.tickers
+            .iter()
+            .any(|w| w.upgrade().is_some_and(|t| t.running.get() && t.not_before.get().is_none_or(|nb| nb <= now)))
+    }
+
+    /// The earliest time a running ticker that waits (`Clock::frame_at`) delivers from.
+    pub(crate) fn next_waiting_tick(&self, now: f64) -> Option<f64> {
+        self.tickers
+            .iter()
+            .filter_map(|w| w.upgrade().filter(|t| t.running.get())?.not_before.get().filter(|&nb| nb > now))
+            .reduce(f64::min)
     }
 
     /// The timers due at `now`, disarmed, as messages (with their owners, for the trace).
@@ -894,7 +920,7 @@ impl Sched {
         }
         let n = out.len();
         each_live(&mut self.tickers, |t| {
-            if t.running.get() {
+            if t.running.get() && t.not_before.get().is_none_or(|nb| nb <= now) {
                 out.push((t.msg.clone(), t.site));
             }
         });
@@ -1021,6 +1047,25 @@ mod tests {
         c.frame();
         drop(c);
         assert_eq!(ui.next_wake(), None, "a dropped clock is not waited for");
+    }
+
+    /// A frame not before a time (`frame_at`) is a ticker that waits: nothing until then, the
+    /// frame at it, and held while the window cannot draw, as frames are (asked as a deadline,
+    /// a motion's next visible step ran at every refresh of a minimised window).
+    #[test]
+    fn a_frame_at_a_time_waits_for_it_and_is_held_while_the_window_cannot_draw() {
+        let (mut ui, mut app) = (Ui::new(100, 100, 1.0), Log::default());
+        let c = ui.clock(Msg::Tick);
+        let _go = ui.schedule(0.0, Msg::Timer);
+        c.frame_at(0.5);
+        assert_eq!(turn(&mut ui, &mut app, 0.0), [Msg::Timer]);
+        assert!(c.ticking(), "a frame was asked for");
+        assert_eq!(ui.next_wake(), Some(0.5), "the window wakes for it then, not at once");
+        assert_eq!(ui.next_app_wake(), None, "a window that cannot draw does not wake for it");
+        assert_eq!(turn(&mut ui, &mut app, 0.25), [], "not before its time");
+        assert_eq!(turn(&mut ui, &mut app, 0.5), [Msg::Tick], "the frame at its time");
+        assert!(!c.ticking(), "not asked again: it stops");
+        assert_eq!(ui.next_wake(), None);
     }
 
     #[test]

@@ -319,6 +319,8 @@ fn role(r: Role, ui: &Ui, id: Id) -> Option<ak::Role> {
         Role::Heading => ak::Role::Heading,
         Role::Image => ak::Role::Image,
         Role::Menu => ak::Role::Menu,
+        // One of a set (`Semantics::checked`): a radio item, its check said with it.
+        Role::MenuItem if ui.tree.el(id).semantics().is_some_and(|s| s.checked.is_some()) => ak::Role::MenuItemRadio,
         Role::MenuItem => ak::Role::MenuItem,
         Role::Dialog => ak::Role::Dialog,
     })
@@ -326,7 +328,15 @@ fn role(r: Role, ui: &Ui, id: Id) -> Option<ak::Role> {
 
 /// A role whose name is the text inside it.
 fn named_by_content(r: ak::Role) -> bool {
-    matches!(r, ak::Role::Button | ak::Role::Switch | ak::Role::ListItem | ak::Role::MenuItem | ak::Role::Heading)
+    matches!(
+        r,
+        ak::Role::Button
+            | ak::Role::Switch
+            | ak::Role::ListItem
+            | ak::Role::MenuItem
+            | ak::Role::MenuItemRadio
+            | ak::Role::Heading
+    )
 }
 
 /// An ancestor of `id` is named by its content: `id`'s text is that ancestor's name.
@@ -436,6 +446,10 @@ fn node(ui: &Ui, id: Id, title: &str) -> (ak::Node, Vec<ak::NodeId>) {
     }
     match r {
         ak::Role::Switch => n.set_toggled(ak::Toggled::from(el.lit())),
+        ak::Role::MenuItemRadio => {
+            n.set_toggled(ak::Toggled::from(written.and_then(|s| s.checked).unwrap_or(false)));
+            n.set_selected(el.lit());
+        }
         ak::Role::ListItem | ak::Role::MenuItem => n.set_selected(el.lit()),
         _ => {}
     }
@@ -640,5 +654,26 @@ mod tests {
         assert!(matches!(ev[1], Event::Value { id, value } if id == doc.id("seek") && value == 35.0));
         assert!(matches!(ev[2], Event::Value { value, .. } if value == 100.0), "a value is kept in the range");
         assert_eq!(ui.focus(), Some(doc.id("row")));
+    }
+
+    /// A menu item said to be one of a set (`Semantics::checked`) is a radio item that says
+    /// whether it is the one; its check mark is only its look.
+    #[test]
+    fn a_checked_menu_item_says_whether_it_is_the_one() {
+        let (mut ui, doc, mut bridge, shared, sent) = scene();
+        for (id, on) in [(doc.id("play"), true), (doc.id("row"), false)] {
+            ui.tree.set_semantics(id, |s| {
+                s.role = Some(Role::MenuItem);
+                s.checked = Some(on);
+            });
+        }
+        let _ = ak::ActivationHandler::request_initial_tree(&mut Handler(shared));
+        bridge.update(&mut ui);
+        let u = &sent.borrow()[0];
+        let play = find(u, doc.id("play")).unwrap();
+        assert_eq!((play.role(), play.toggled()), (ak::Role::MenuItemRadio, Some(ak::Toggled::True)));
+        let row = find(u, doc.id("row")).unwrap();
+        assert_eq!((row.role(), row.toggled()), (ak::Role::MenuItemRadio, Some(ak::Toggled::False)));
+        assert_eq!(row.label(), Some("Paper Lantern"), "named by the text inside it");
     }
 }

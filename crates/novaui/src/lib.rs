@@ -54,6 +54,7 @@ pub mod backend {
     pub use crate::render::d3d11::D3d11;
     pub use crate::render::primitive::{Draw, HdrOutput, Prim, Target};
     pub use crate::render::software::Software;
+    #[cfg(not(windows))]
     pub use crate::render::vulkan::Vulkan;
     pub use crate::render::Backend;
 

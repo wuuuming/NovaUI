@@ -303,6 +303,15 @@ pub trait Backend {
     fn frame_ready(&mut self) -> bool {
         true
     }
+    /// Times the GPU's work per frame from now on (`NOVAUI_TRACE`); a backend that cannot, does
+    /// nothing.
+    fn gpu_timing(&mut self, on: bool) {
+        let _ = on;
+    }
+    /// Adds the µs the GPU took for each frame it finished since the last call (`gpu_timing`).
+    fn gpu_frames(&mut self, out: &mut Vec<u32>) {
+        let _ = out;
+    }
     fn finish(&mut self) {}
     /// Presents without waiting for vblank (used while the window is being resized: a frame
     /// per size step matters more than tear-free pacing).

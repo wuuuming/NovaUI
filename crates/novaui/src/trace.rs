@@ -18,7 +18,10 @@
 //! `Ticker`, its call site counted under `wakes`), `tree` (pending tree work or animation), else `idle`: a turn
 //! that had nothing to do, which must stay 0. `us_turn` excludes `us_wait`, the time spent waiting
 //! for the swap chain to take a frame. Allocations are counted only when the app installs
-//! `CountingAlloc` as its global allocator; otherwise `allocs` is absent.
+//! `CountingAlloc` as its global allocator; otherwise `allocs` is absent. Where the backend can
+//! time the GPU (`Backend::gpu_frames`: D3D11), `us_gpu=` and `gpu_max=` give the GPU's time for
+//! the frames it finished that second (summed, and the longest), and with `NOVAUI_TRACE_TURNS`
+//! each finished frame writes `gpu t=<s> us=<µs>`.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -97,6 +100,9 @@ struct Totals {
     layouts_max: u64,
     allocs: u64,
     allocs_frame_max: u64,
+    gpu_frames: u64,
+    us_gpu: u64,
+    gpu_max: u64,
 }
 
 /// What the current turn has done so far.
@@ -132,6 +138,9 @@ pub(crate) struct Trace {
     turns: bool,
     /// When the last frame was presented (`stalls`).
     last_present: Instant,
+    /// The backend was asked to time the GPU; its finished frames' times, read each frame.
+    gpu_on: bool,
+    gpu: Vec<u32>,
     /// The start of the first turn of the current run of turns that ended with drawable work
     /// pending (`stalls`); `None` when the last turn ended with none.
     pending_since: Option<Instant>,
@@ -154,6 +163,8 @@ impl Trace {
             hits: (0, 0),
             turns: std::env::var_os("NOVAUI_TRACE_TURNS").is_some(),
             last_present: now,
+            gpu_on: false,
+            gpu: Vec::new(),
             pending_since: None,
         }))
     }
@@ -190,6 +201,31 @@ impl Trace {
         self.turn.us_update += update;
         self.turn.us_layout += layout;
         self.turn.us_after += after;
+    }
+
+    /// Asks `be` to time the GPU (once, before the first traced frame).
+    pub(crate) fn gpu_timing(&mut self, be: &mut dyn crate::render::Backend) {
+        if !std::mem::replace(&mut self.gpu_on, true) {
+            be.gpu_timing(true);
+        }
+    }
+
+    /// Counts the GPU times of the frames `be` finished since the last frame.
+    pub(crate) fn gpu_frames(&mut self, be: &mut dyn crate::render::Backend) {
+        let mut done = std::mem::take(&mut self.gpu);
+        done.clear();
+        be.gpu_frames(&mut done);
+        let t = self.t0.elapsed().as_secs_f64();
+        for &us in &done {
+            let s = &mut self.sum;
+            s.gpu_frames += 1;
+            s.us_gpu += u64::from(us);
+            s.gpu_max = s.gpu_max.max(u64::from(us));
+            if self.turns {
+                let _ = writeln!(self.out, "gpu t={t:.5} us={us}");
+            }
+        }
+        self.gpu = done;
     }
 
     pub(crate) fn waited(&mut self, us: u64) {
@@ -288,11 +324,12 @@ impl Trace {
         } else {
             String::new()
         };
+        let gpu = if s.gpu_frames > 0 { format!(" us_gpu={} gpu_max={}", s.us_gpu, s.gpu_max) } else { String::new() };
         let _ = writeln!(
             self.out,
             "t={:.3} turns={} idle={} input={} waker={} timer={} tree={} frames={} empty={} presents={} \
              us_turn={} us_update={} us_layout={} us_after={} us_frame={} us_present={} us_wait={} positioned={} \
-             moved={} painted={} prims={} hits={h} hit_visits={v} layouts_max={} stalls={}{allocs} wakes={}",
+             moved={} painted={} prims={} hits={h} hit_visits={v} layouts_max={} stalls={}{allocs}{gpu} wakes={}",
             self.t0.elapsed().as_secs_f64(),
             s.turns,
             s.idle,

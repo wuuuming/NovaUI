@@ -32,11 +32,14 @@ qrcodegen = "=1.8.0"
 # Encoded images to handles (`image::decode`), and the content key of their cache.
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp", "bmp"] }
 sha2 = "=0.11.0"
-ash = { version = "=0.38.0", default-features = false, features = ["loaded", "std"] }
 taffy = { version = "=0.14.0", default-features = false, features = ["std", "taffy_tree", "flexbox", "block_layout", "content_size"] }
 nova-icons = { path = "../nova-icons" }
 # The accessibility tree (screen readers): AccessKit's schema, and below its platform adapters.
 accesskit = "=0.25.1"
+
+# Vulkan (`render::vulkan`): every platform's renderer but Windows' (D3D11 there).
+[target.'cfg(not(windows))'.dependencies]
+ash = { version = "=0.38.0", default-features = false, features = ["loaded", "std"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = [

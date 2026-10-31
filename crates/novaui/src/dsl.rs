@@ -1178,6 +1178,10 @@ struct Tween {
     t0: f64,
     out: f32,
     running: bool,
+    /// The value it was easing to when last evaluated.
+    goal: f32,
+    /// How far along its curve (0..1) it was then.
+    k: f32,
 }
 
 fn num(v: &Val, sheet: &Sheet) -> f32 {
@@ -1426,6 +1430,13 @@ fn smootherstep(t: f32) -> f32 {
     t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 }
 
+/// Where on the smootherstep curve a tween turned back at `k` resumes the other way: the point
+/// covering what remained (`1 - smootherstep(k)`). The curve is point-symmetric about its middle,
+/// so that point is `1 - k`, its speed there the speed it had.
+fn tween_mirror(k: f32) -> f32 {
+    1.0 - k.clamp(0.0, 1.0)
+}
+
 struct Eval<'a> {
     sheet: &'a Sheet,
     lets: &'a HashMap<String, Val>,
@@ -1566,6 +1577,9 @@ impl Eval<'_> {
         if f == "tween" {
             // tween(value, across, duration): the value, eased from where it was over
             // `duration` (smootherstep) each time `across` flips; follows it exactly otherwise.
+            // A flip back while it runs retraces the curve from where it stands (the same
+            // place and speed, the time it already went left to go back), not a whole
+            // `duration` from rest: flipping it fast keeps up with the hand.
             let target = args.first().map_or(0.0, |a| self.n(a));
             let across = args.get(1).map(|a| {
                 let v = self.eval(a);
@@ -1580,14 +1594,20 @@ impl Eval<'_> {
                 t0: now - 10.0,
                 out: target,
                 running: false,
+                goal: target,
+                k: 1.0,
             });
             if across.is_some_and(|a| a != t.across) {
                 t.across = across.unwrap();
-                t.from = t.out;
-                t.t0 = now;
+                // Running: back along the curve from its mirror point (same place, same speed).
+                let back = if t.running { tween_mirror(t.k) } else { 0.0 };
+                t.from = if t.running { t.goal } else { t.out };
+                t.t0 = now - f64::from(back) * dur;
                 t.running = true;
             }
             let k = if dur > 0.0 { ((now - t.t0) / dur) as f32 } else { 1.0 };
+            t.goal = target;
+            t.k = k.min(1.0);
             if k >= 1.0 {
                 t.running = false;
                 t.out = target;

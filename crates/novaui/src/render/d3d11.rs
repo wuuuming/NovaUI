@@ -9,6 +9,8 @@
 //! (linear, 1.0 = 80 nits), and the present decodes each pixel and scales it to the output's SDR
 //! white (`fs_present`) instead of copying it.
 
+mod timing;
+
 use crate::geom::*;
 use crate::render::batch::{self as gpu, Batch, Inst, Tex as TexRef, INST_SIZE};
 use crate::render::primitive::*;
@@ -137,6 +139,8 @@ pub struct D3d11 {
     owed: u32,
     /// When the newest present was made: a signal not there 34 ms after it will not come.
     presented_at: std::time::Instant,
+    /// The GPU's time per frame, while a trace asks (`gpu_frames`).
+    timing: timing::Timing,
     first_present: bool,
     prev_damage: Vec<Rect>,
     adapter: String,
@@ -303,6 +307,53 @@ fn compile(src: &str, entry: &str, target: &str) -> windows::core::Result<Vec<u8
     Ok(unsafe { std::slice::from_raw_parts(b.GetBufferPointer() as *const u8, b.GetBufferSize()).to_vec() })
 }
 
+/// The built-in programs' bytecode: the vertex program, each `gpu::FS` pixel program in order, and
+/// the present one. `D3DCompile` is the slow half of making a device (130 ms of 350 on a
+/// laptop GPU, its 11 programs one after another): they compile once a process, each
+/// on its own thread, and every device after the first (an overlay, a device made again after a
+/// loss) takes them as they are.
+struct Programs {
+    vs: Vec<u8>,
+    ps: Vec<Vec<u8>>,
+    present: Vec<u8>,
+}
+
+static PROGRAMS: std::sync::OnceLock<Result<Programs, String>> = std::sync::OnceLock::new();
+
+/// The built-in programs, compiled the first time (see `Programs`); a caller while another
+/// compiles waits for it.
+fn programs() -> windows::core::Result<&'static Programs> {
+    let made = PROGRAMS.get_or_init(|| {
+        let src = gpu::HLSL;
+        let entries: Vec<(&str, &str)> = std::iter::once(("vs", "vs_5_0"))
+            .chain(gpu::FS.iter().map(|e| (*e, "ps_5_0")))
+            .chain(std::iter::once(("fs_present", "ps_5_0")))
+            .collect();
+        let mut out: Vec<Result<Vec<u8>, String>> = std::thread::scope(|s| {
+            let jobs: Vec<_> =
+                entries.iter().map(|&(e, t)| s.spawn(move || compile(src, e, t).map_err(|e| e.message()))).collect();
+            jobs.into_iter().map(|j| j.join().unwrap_or_else(|_| Err("a shader compile panicked".into()))).collect()
+        });
+        let present = out.pop().ok_or("no programs")??;
+        let vs = out.remove(0)?;
+        let ps = out.into_iter().collect::<Result<Vec<_>, _>>()?;
+        Ok(Programs { vs, ps, present })
+    });
+    made.as_ref().map_err(|e| failed(e.clone()))
+}
+
+/// Starts compiling the built-in programs on a thread of their own (`programs`), so they are
+/// ready by the time the window's device is made (the driver's own start, ~180 ms, runs beside
+/// them). Once a process; a no-op after.
+pub fn warm() {
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        let _ = std::thread::Builder::new().name("novaui-d3d11-programs".into()).spawn(|| {
+            let _ = programs();
+        });
+    });
+}
+
 impl D3d11 {
     pub fn new(w: i32, h: i32) -> windows::core::Result<Self> {
         // SAFETY: device and resource creation on this thread; every description passed is a
@@ -338,20 +389,18 @@ impl D3d11 {
             // The built-in programs (HLSL made when novaui was built); image effects come with the
             // first draw, one by one, so one that does not compile here costs only its own draws
             // (`draw`).
-            let src = gpu::HLSL;
-            let vsb = compile(src, "vs", "vs_5_0")?;
+            let programs = programs()?;
+            let vsb = &programs.vs;
             let mut vs = None;
-            dev.CreateVertexShader(&vsb, None, Some(&mut vs))?;
+            dev.CreateVertexShader(vsb, None, Some(&mut vs))?;
             let mut ps = Vec::new();
-            for e in gpu::FS {
-                let b = compile(src, e, "ps_5_0")?;
+            for b in &programs.ps {
                 let mut p = None;
-                dev.CreatePixelShader(&b, None, Some(&mut p))?;
+                dev.CreatePixelShader(b, None, Some(&mut p))?;
                 ps.push(Some(made(p)?));
             }
-            let b = compile(src, "fs_present", "ps_5_0")?;
             let mut present_ps = None;
-            dev.CreatePixelShader(&b, None, Some(&mut present_ps))?;
+            dev.CreatePixelShader(&programs.present, None, Some(&mut present_ps))?;
             let sem = PCSTR(c"LOC".as_ptr().cast());
             let elems: Vec<D3D11_INPUT_ELEMENT_DESC> = (0..gpu::INST_ATTRS)
                 .map(|i| D3D11_INPUT_ELEMENT_DESC {
@@ -365,7 +414,7 @@ impl D3d11 {
                 })
                 .collect();
             let mut layout = None;
-            dev.CreateInputLayout(&elems, &vsb, Some(&mut layout))?;
+            dev.CreateInputLayout(&elems, vsb, Some(&mut layout))?;
             let mut bd = D3D11_BLEND_DESC::default();
             bd.RenderTarget[0] = D3D11_RENDER_TARGET_BLEND_DESC {
                 BlendEnable: true.into(),
@@ -431,6 +480,7 @@ impl D3d11 {
                 released: false,
                 owed: 0,
                 presented_at: std::time::Instant::now(),
+                timing: Default::default(),
                 first_present: true,
                 prev_damage: Vec::new(),
                 adapter,
@@ -1123,6 +1173,7 @@ impl Backend for D3d11 {
             // New buffers hold nothing yet; the canvas holds the whole last frame.
             self.present(&[]);
         }
+        self.timing.end(&self.ctx);
         if std::mem::take(&mut self.released) {
             // SAFETY: the immediate context through `&mut self`, on this thread.
             unsafe { self.ctx.Flush() };
@@ -1150,7 +1201,14 @@ impl Backend for D3d11 {
             }
         }
     }
+    fn gpu_timing(&mut self, on: bool) {
+        self.timing.set_on(on);
+    }
+    fn gpu_frames(&mut self, out: &mut Vec<u32>) {
+        self.timing.finished(&self.ctx, out);
+    }
     fn draw(&mut self, target: Target, clip: Rect, off: (i32, i32), clear: Color, draws: &[Draw]) {
+        self.timing.begin(&self.dev, &self.ctx);
         // A program that does not compile here has its draws skipped (no shader); the rest of the
         // frame is drawn.
         for (_, p) in crate::image::effect::added_since(&mut self.effects) {
@@ -1218,6 +1276,9 @@ impl Backend for D3d11 {
         self.batches = batches;
     }
     fn present(&mut self, damage: &[Rect]) {
+        // The frame's drawing is timed, not the copy to the swap chain's buffer: that waits on
+        // the compositor giving the buffer back, which is not the frame's cost.
+        self.timing.end(&self.ctx);
         let Some(sc) = self.swap.clone() else {
             return;
         };

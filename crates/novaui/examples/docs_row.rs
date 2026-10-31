@@ -48,6 +48,7 @@ fn main() {
         min_height: 300,
         backend: Default::default(),
         accessibility: false,
+        bounds: None,
     };
     platform::run(options, |ui| Box::new(Demo::new(ui))).expect("a window");
 }

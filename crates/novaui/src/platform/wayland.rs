@@ -560,6 +560,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for State {
                             s.p.right_down = Some((x, y, serial));
                         }
                         // Logical → physical is the loop's; stash with a marker.
+                        if down {
+                            s.p.input.push(Input::Mods(s.keys.as_ref().map_or_else(Mods::default, Keys::mods)));
+                        }
                         s.p.input.push(if down {
                             Input::Down(x as i32, y as i32, b)
                         } else {
@@ -1243,6 +1246,18 @@ impl runner::Host for WlHost {
             }
             super::set_maximized(ui, m);
             ui.window.fullscreen = f;
+            // The size it has when neither maximized nor fullscreen, kept (`Window::bounds`).
+            if self.overlay.is_none() {
+                let was = ui.window.bounds;
+                let bounds = match was {
+                    Some(b) if m || f => Some(super::Bounds { maximized: m, ..b }),
+                    _ => Some(super::Bounds { x: 0, y: 0, width: self.win.lw, height: self.win.lh, maximized: m }),
+                };
+                if bounds != was {
+                    ui.window.bounds = bounds;
+                    ui.events.push(crate::Event::Moved);
+                }
+            }
         }
         if let Some(sr) = self.st.p.configure_serial.take() {
             if let Role::Toplevel { xdg, .. } = &self.win.role {
@@ -1336,6 +1351,7 @@ impl runner::Host for WlHost {
             }
             if !taken {
                 self.pressed_in_client = true;
+                ui.input(Input::Mods(self.st.keys.as_ref().map_or_else(Mods::default, Keys::mods)));
                 ui.input(Input::Down(x, y, MouseButton::Left));
             }
         }
@@ -1623,13 +1639,19 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
     let (viewport, frac) = scaling(&c.st, &qh, &surface);
     let int_scale = c.st.outputs_on().map(|o| o.scale).max().unwrap_or(1).max(1);
     top.set_min_size(opts.min_width, opts.min_height);
+    // Its kept size (a Wayland client has no place on the screen to keep), maximized if it was.
+    let kept = opts.bounds.filter(|b| b.width >= opts.min_width && b.height >= opts.min_height);
+    if kept.is_some_and(|b| b.maximized) {
+        top.set_maximized();
+    }
+    let (lw, lh) = kept.map_or((opts.width, opts.height), |b| (b.width, b.height));
     let mut win = Win {
         surface,
         role: Role::Toplevel { xdg, top },
         viewport,
         _frac: frac,
-        lw: opts.width,
-        lh: opts.height,
+        lw,
+        lh,
         scale120: int_scale as u32 * 120,
         shadow: None,
         shadow_scale: 0,
@@ -1800,6 +1822,9 @@ fn host_loop(
     ui.set_task_wake(wake.clone());
     ui.window.maximized = maximized;
     ui.window.fullscreen = fullscreen_on;
+    if overlay.is_none() {
+        ui.window.bounds = Some(super::Bounds { x: 0, y: 0, width: win.lw, height: win.lh, maximized });
+    }
     if let Some(o) = &overlay {
         ui.window.place = Some(o.place());
         ui.window.work_area = st.output_size().map(|(w, h)| (w as f32, h as f32));
@@ -1846,17 +1871,25 @@ fn host_loop(
         let _ = q.dispatch_pending(&mut host.st);
         let _ = host.conn.flush();
         let t = runner::Host::now(&host);
-        let repeat_ms = host.repeat.map(|(_, at)| runner::ms_until(at, t));
-        let timeout =
-            [pacer.timeout_ms(&ui, t, true, false), repeat_ms].into_iter().flatten().min().map_or(-1, |ms| ms as c_int);
+        let repeat = host.repeat.map(|(_, at)| runner::secs_until(at, t));
+        let timeout = [pacer.timeout(&ui, t, true, false), repeat].into_iter().flatten().reduce(f64::min);
         untrimmed.before_wait(timeout);
         if let Some(guard) = q.prepare_read() {
             let mut p = [
                 libc::pollfd { fd: wfd, events: libc::POLLIN, revents: 0 },
                 libc::pollfd { fd: fds[0], events: libc::POLLIN, revents: 0 },
             ];
-            // SAFETY: `p` is a live local array of two pollfds.
-            unsafe { libc::poll(p.as_mut_ptr(), 2, timeout) };
+            // To the microsecond (`runner`): poll's whole milliseconds miss a refresh.
+            let ts = runner::timespec(timeout);
+            // SAFETY: `p` is a live local array of two pollfds; `ts`, when given, a live timespec.
+            unsafe {
+                libc::ppoll(
+                    p.as_mut_ptr(),
+                    2,
+                    ts.as_ref().map_or(std::ptr::null(), |t| t as *const _),
+                    std::ptr::null(),
+                )
+            };
             if p[0].revents & libc::POLLIN != 0 {
                 let _ = guard.read();
             } else {

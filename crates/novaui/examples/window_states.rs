@@ -80,6 +80,7 @@ mod win {
                 min_height: 200,
                 backend: novaui::platform::BackendKind::D3d11,
                 accessibility: false,
+                bounds: None,
             },
             move |ui| {
                 Box::new(Audit {

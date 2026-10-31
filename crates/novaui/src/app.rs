@@ -159,7 +159,8 @@ pub enum Event {
     /// it to its own message type.
     Message(crate::sched::Message),
     Resized,
-    /// An overlay was moved (`Window::place` is where it is now).
+    /// An overlay was moved (`Window::place` is where it is now), or an ordinary window moved,
+    /// was resized, maximized or restored (`Window::bounds`).
     Moved,
     WindowFocus(bool),
 }
@@ -225,10 +226,13 @@ pub struct Ui {
     pub(crate) trace: Option<Box<crate::trace::Trace>>,
     /// The turn's one clock reading (`runtime.md`, "Time and timers").
     pub(crate) now: f64,
+    /// Seconds between the display's refreshes (`refresh_period`).
+    pub(crate) period: f64,
     /// A discontinuous viewport change; declarative layout transitions must settle immediately.
     pub(crate) snap_version: u64,
     pub(crate) last_blink: f64,
-    pub(crate) shift_down: bool,
+    /// The modifier keys held at the last pointer press (`Input::Mods`).
+    pub(crate) press_mods: crate::input::Mods,
     pub(crate) cursor: Cursor,
     /// The app's cursor over all others (autoscroll's), while set.
     pub(crate) cursor_override: Option<Cursor>,
@@ -322,9 +326,10 @@ impl Ui {
             msgs: Vec::new(),
             trace: crate::trace::Trace::from_env(),
             now: 0.0,
+            period: 1.0 / 60.0,
             snap_version: 0,
             last_blink: 0.0,
-            shift_down: false,
+            press_mods: Default::default(),
             cursor: Cursor::Arrow,
             cursor_override: None,
             strings: crate::i18n::global().clone(),
@@ -335,6 +340,18 @@ impl Ui {
     /// animation and handler in it.
     pub fn now(&self) -> f64 {
         self.now
+    }
+
+    /// Seconds between the refreshes of the display the window is on (1/60 until a host says,
+    /// and headless): a motion whose next visible step is further off than this asks for a
+    /// frame then (`Clock::at`), not at every refresh (`Clock::frame`).
+    pub fn refresh_period(&self) -> f64 {
+        self.period
+    }
+
+    /// Sets `refresh_period` (a headless driver pacing its own frames).
+    pub fn set_refresh_period(&mut self, secs: f64) {
+        self.period = secs;
     }
 
     /// Sets the clock for the next turn. Hosts read the clock themselves; this is for headless
@@ -367,6 +384,12 @@ impl Ui {
     /// itself, a test reading what input raised).
     pub fn take_events(&mut self) -> Vec<Event> {
         std::mem::take(&mut self.events)
+    }
+
+    /// The modifier keys held as the pointer last went down (Shift+click, Ctrl+click): what a
+    /// `Click` or `RightClick` was pressed with.
+    pub fn press_mods(&self) -> crate::input::Mods {
+        self.press_mods
     }
 
     /// Where the pointer is (physical client px), if over the window.
@@ -464,8 +487,13 @@ impl Ui {
 
     pub fn next_wake(&self) -> Option<f64> {
         // A running ticker wants the next frame: at once, paced by the swap chain (`Pacer`).
-        let tick = self.sched.ticking().then_some(self.now);
-        [self.next_app_wake(), self.tree.trim_at(), self.tree.next_leave(), tick].into_iter().flatten().reduce(f64::min)
+        // One that waits (`Clock::frame_at`) wants the frame at its time.
+        let tick = self.sched.ticking(self.now).then_some(self.now);
+        let waiting = self.sched.next_waiting_tick(self.now);
+        [self.next_app_wake(), self.tree.trim_at(), self.tree.next_leave(), tick, waiting]
+            .into_iter()
+            .flatten()
+            .reduce(f64::min)
     }
 
     /// App timers remain runnable while the native window cannot draw (tickers are held). A
@@ -541,6 +569,18 @@ impl Ui {
         self.io.clipboard_reads.push(Box::new(move |t| std::rc::Rc::new(done(t)) as crate::sched::Message));
     }
 
+    /// Puts `text` on the clipboard (the host writes it at the end of this turn, as a field's
+    /// Ctrl+C): a menu's 复制, a share link.
+    pub fn write_clipboard(&mut self, text: impl Into<String>) {
+        self.io.clipboard_out = Some(text.into());
+    }
+
+    /// What this turn put on the clipboard, taken: for a headless driver, which has no host to
+    /// write it (as `Window::discard_requests` drops the window's requests).
+    pub fn take_clipboard(&mut self) -> Option<String> {
+        self.io.clipboard_out.take()
+    }
+
     /// Asks the system's file picker: `done(paths)` is delivered (`Event::Message`) once the user
     /// has answered, no paths when they cancelled. The window keeps turning while it is open
     /// where the platform allows (Linux: the picker is a child process; Windows' picker is modal
@@ -599,7 +639,7 @@ impl Ui {
     /// A host turn ends; `visible` is false while the window cannot show a frame (minimised).
     pub(crate) fn turn_end(&mut self, visible: bool) {
         if let Some(tr) = &mut self.trace {
-            let animating = visible && (self.tree.has_work() || self.sched.ticking());
+            let animating = visible && (self.tree.has_work() || self.sched.ticking(self.now));
             tr.turn_end(&self.tree, animating);
         }
     }
@@ -617,9 +657,11 @@ impl Ui {
     pub(crate) fn frame(&mut self, be: &mut dyn crate::render::Backend, now: f64) -> bool {
         let Some(tr) = &mut self.trace else { return self.tree.frame(be, now) };
         let (t, a) = (std::time::Instant::now(), crate::trace::ALLOCATIONS.load(std::sync::atomic::Ordering::Relaxed));
+        tr.gpu_timing(be);
         let drew = self.tree.frame(be, now);
         let allocs = crate::trace::ALLOCATIONS.load(std::sync::atomic::Ordering::Relaxed) - a;
         tr.frame(&self.tree, drew, t.elapsed().as_micros() as u64, allocs);
+        tr.gpu_frames(be);
         drew
     }
 

@@ -87,11 +87,14 @@ the product (side panel, track, layout, drag; `principles.md` N1) stay app vocab
   again any number of times (`cancel` disarms it); `ui.schedule(t, msg)` makes one already armed.
 - `ui.ticker(msg)` (`start` / `stop` / `run(bool)`). A ticker runs at most once per refresh
   period, at the turn's time, and is held while the window cannot draw.
-- `ui.clock(msg) -> Clock`: an owner's time asked during a turn (`frame`, `at`, `within`,
-  `cancel`) and settled by the framework at the end of every turn that ran the app, for every live
+- `ui.clock(msg) -> Clock`: an owner's time asked during a turn (`frame`, `frame_at`, `at`,
+  `within`, `cancel`) and settled by the framework at the end of every turn that ran the app, for every live
   clock: its ticker runs while frames are asked for and stops in the first turn none is; its
-  timer is armed for the earliest deadline not yet served (one asked holds until served). An
-  owner that asks per turn needs no list of its own to turn asks into handles.
+  timer is armed for the earliest deadline not yet served (one asked holds until served).
+  `frame_at(t)` asks for a frame not before `t` (a motion whose next visible step is further off
+  than a refresh): a ticker that waits until then, asked per turn as `frame` and held as tickers
+  are while the window cannot draw, where a deadline (`at`) would be served. An owner that asks
+  per turn needs no list of its own to turn asks into handles.
 - `ui.spawn(priority, work(&Cancel) -> R, done(R) -> msg) -> Option<Task>` (`work`'s `Cancel`
   tells it whether its `Task` was dropped):
   - two priorities, `Visible` before `Background`, on a small worker pool; when the system
@@ -147,7 +150,10 @@ the OS runs inside its own loop (win32's modal size/move loop, `WM_PAINT`): a tu
 while one is running only leaves its messages queued for the running one.
 
 **As built, `src/runner.rs`:**
-- `Pacer` holds the refresh deadline.
+- `Pacer` holds the refresh deadline, and says how long the host sleeps to it in seconds
+  (`Pacer::timeout`). Hosts sleep to the microsecond (win32 on a high-resolution waitable
+  timer, X11 and Wayland in `ppoll`): a sleep in whole milliseconds, or on Windows' 15.6 ms
+  default timer tick, misses a refresh at 240 Hz and every one at 1000 Hz.
 - `turn` is the order, once for every host: the swap chain's wait, the turn's one clock
   reading, the host's events, `deliver` (phases 1–5), the window requests, cursor, IME,
   clipboard and pickers, then `draw` (phase 6) when the host allows it.
@@ -373,6 +379,7 @@ by the tests that the measuring scripts already drive:
 | allocations per frame (debug) | 0 on a steady animation | hot-path allocation |
 | elements visited per frame | O(invalidated) | whole-tree walks |
 | wake owners | listed by the `NOVAUI_TRACE` log (like egui's `repaint_causes`, §10) | anonymous wakes |
+| GPU time per frame | within the refresh, with room (`us_gpu`, `gpu_max`; D3D11 timestamp queries) | a frame the GPU cannot finish in time |
 
 **Review checklist for any change touching the runtime:**
 - Which phase does the new code run in, and does §5 allow its writes?

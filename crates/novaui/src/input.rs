@@ -83,6 +83,9 @@ pub enum Input {
     Preedit(String, usize),
     /// Committed IME text.
     Commit(String),
+    /// The modifier keys held as the pointer goes down: a host sends it before every `Down`
+    /// (`Ui::press_mods`; Shift+press extends a text selection, a list reads Shift / Ctrl).
+    Mods(Mods),
 }
 
 /// What the left button is doing. One gesture at a time; the transitions are in `Ui::input`,
@@ -289,7 +292,7 @@ impl Ui {
                         gained && edit.is_some_and(|f| self.io.edits.get(&f).is_some_and(|e| e.select_on_focus));
                     if let Some(f) = edit.filter(|f| Some(*f) == t && !selects) {
                         let at = self.edit_hit(f, x);
-                        let extend = self.shift_down;
+                        let extend = self.press_mods.shift;
                         if let Some(e) = self.io.edits.get_mut(&f) {
                             e.st.move_to(at, extend);
                         }
@@ -359,8 +362,8 @@ impl Ui {
             Input::Key(key::ESCAPE, _) if matches!(self.gesture, Pointer::Dragging { .. }) => self.cancel_drag(),
             #[cfg(any(debug_assertions, test))]
             Input::Key(crate::dev::INSPECT_KEY, _) => crate::dev::Dev::toggle(self),
+            Input::Mods(m) => self.press_mods = m,
             Input::Key(vk, mods) => {
-                self.shift_down = mods.shift;
                 if let Some(f) = self.focus {
                     if self.edit_key(f, vk, mods) {
                         return;

@@ -109,3 +109,5 @@ LockOpen	F0023	Lock Open	regular	native	Overlays: unlocked.
 FontIncrease	F0024	Font Increase	regular	native	Larger text.
 FontDecrease	F0025	Font Decrease	regular	native	Smaller text.
 SlideText	F0026	Slide Text	regular	native	Text shown on the desktop (desktop lyrics).
+Copy	F0027	Copy	regular	native	Menus: copy the song's words or lyrics.
+MultiselectLtr	F0028	Multiselect LTR	regular	native	The queue's multi-select toggle.

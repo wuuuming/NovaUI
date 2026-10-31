@@ -11,7 +11,9 @@
 //! 3. the host carries out the app's window requests, cursor, IME, clipboard and pickers;
 //! 4. `draw`: a frame when the tree has work and the window can show it;
 //! 5. the accessibility tree's update (`access`), when a client has it; `turn_end`; the host
-//!    then sleeps for `Pacer::timeout_ms`.
+//!    then sleeps for `Pacer::timeout`, to the microsecond (`wait_secs`): a refresh at 240 Hz is
+//!    4.2 ms, at 1000 Hz 1 ms, and a sleep in whole milliseconds (or on Windows' 15.6 ms default
+//!    tick) misses it.
 
 use crate::app::{App, Event, Ui};
 use crate::geom::Color;
@@ -92,6 +94,7 @@ pub(crate) fn turn<H: Host + ?Sized>(host: &mut H, ui: &mut Ui, app: &mut dyn Ap
         ui.wait_frame(host.backend());
     }
     ui.now = host.now();
+    ui.period = pacer.period;
     pacer.begin(ui.now);
     ui.tree.take_made_images(host.backend());
     host.events(ui, app, pacer);
@@ -183,10 +186,15 @@ pub(crate) fn replace_backend(
     }
 }
 
-/// Whole milliseconds from `now` until `t` (rounded up, at least 0), at most a minute: how long a
-/// host sleeps for it.
-pub(crate) fn ms_until(t: f64, now: f64) -> u32 {
-    (((t - now) * 1000.0).ceil().max(0.0) as u32).min(60_000)
+/// Seconds from `now` until `t` (at least 0), at most a minute: how long a host sleeps for it.
+pub(crate) fn secs_until(t: f64, now: f64) -> f64 {
+    (t - now).clamp(0.0, 60.0)
+}
+
+/// A sleep of `secs` (`None`: until something comes) as `poll`'s `timespec` (`ppoll`).
+#[cfg(target_os = "linux")]
+pub(crate) fn timespec(secs: Option<f64>) -> Option<libc::timespec> {
+    secs.map(|s| libc::timespec { tv_sec: s.trunc() as libc::time_t, tv_nsec: (s.fract() * 1e9) as libc::c_long })
 }
 
 impl Pacer {
@@ -219,9 +227,9 @@ impl Pacer {
         Some(if self.last_turn_drew { t } else { t.max(self.refresh_after(self.last_turn_at)) })
     }
 
-    /// How long a host sleeps before the next turn, in ms (`None`: until a message comes).
+    /// How long a host sleeps before the next turn, in seconds (`None`: until a message comes).
     /// `pending` is true when the host already holds messages or other work for the next turn.
-    pub(crate) fn timeout_ms(&self, ui: &Ui, now: f64, can_draw: bool, pending: bool) -> Option<u32> {
+    pub(crate) fn timeout(&self, ui: &Ui, now: f64, can_draw: bool, pending: bool) -> Option<f64> {
         // Finished tasks and model changes are delivered even while the window cannot draw.
         // Tree work the host holds back (`hold`) waits for its refresh: run at once, every turn
         // would hold it again, a spin of empty turns until then.
@@ -231,14 +239,14 @@ impl Pacer {
         // a second.
         let animation_only = !self.last_turn_drew && ui.only_animating();
         if pending || ui.sched.pending() || (can_draw && ui.has_work() && self.hold.is_none() && !animation_only) {
-            return Some(0);
+            return Some(0.0);
         }
         if can_draw && animation_only && self.hold.is_none() {
             // Nothing earlier: after a turn that drew nothing, `next_turn` waits for it too.
             let t = self.refresh_after(self.last_turn_at);
-            return Some(ms_until(t, now));
+            return Some(secs_until(t, now));
         }
-        self.next_turn(ui, can_draw).map(|t| ms_until(t, now))
+        self.next_turn(ui, can_draw).map(|t| secs_until(t, now))
     }
 
     /// A turn starts at `now`.
@@ -355,10 +363,10 @@ mod tests {
         let ui = Ui::new(100, 100, 1.0);
         assert!(ui.has_work(), "a new window has its first frame to draw");
         let mut pacer = Pacer::new(240.0);
-        assert_eq!(pacer.timeout_ms(&ui, 0.0, true, false), Some(0));
+        assert_eq!(pacer.timeout(&ui, 0.0, true, false), Some(0.0));
         pacer.hold = Some(0.0035);
-        assert_eq!(pacer.timeout_ms(&ui, 0.0, true, false), Some(4));
-        assert_eq!(pacer.timeout_ms(&ui, 0.0, true, true), Some(0), "queued messages still go at once");
+        assert_eq!(pacer.timeout(&ui, 0.0, true, false), Some(0.0035), "to the refresh, not a whole ms");
+        assert_eq!(pacer.timeout(&ui, 0.0, true, true), Some(0.0), "queued messages still go at once");
     }
 
     /// An animation that shows nothing (here, of a hidden element) leaves the tree with work
@@ -380,8 +388,8 @@ mod tests {
         ui.now = 0.01;
         assert!(!draw(&mut ui, &mut be, &mut pacer), "a hidden element's animation draws nothing");
         assert!(ui.has_work(), "the animation runs on");
-        let ms = pacer.timeout_ms(&ui, 0.01, true, false);
-        assert!(ms.is_some_and(|ms| ms >= 1), "the next turn waits for the refresh, not {ms:?}");
-        assert_eq!(pacer.timeout_ms(&ui, 0.01, true, true), Some(0), "queued messages still go at once");
+        let s = pacer.timeout(&ui, 0.01, true, false);
+        assert!(s.is_some_and(|s| s > 0.0 && s <= 1.0 / 240.0), "the next turn waits for the refresh, not {s:?}");
+        assert_eq!(pacer.timeout(&ui, 0.01, true, true), Some(0.0), "queued messages still go at once");
     }
 }

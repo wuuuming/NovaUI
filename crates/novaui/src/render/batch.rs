@@ -8,11 +8,13 @@ use crate::render::primitive::*;
 #[cfg(windows)]
 pub const HLSL: &str = include_str!(concat!(env!("OUT_DIR"), "/prims.hlsl"));
 
+#[cfg(not(windows))]
 mod spirv {
     include!(concat!(env!("OUT_DIR"), "/prims_spirv.rs"));
 }
 
 /// The renderer's SPIR-V module of `entry` (one per entry point), compiled when novaui was built.
+#[cfg(not(windows))]
 pub fn spirv(entry: &str) -> Option<&'static [u8]> {
     spirv::SPIRV.iter().find(|(e, _)| *e == entry).map(|(_, b)| *b)
 }

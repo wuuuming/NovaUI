@@ -1588,17 +1588,32 @@ impl Tree {
 
     // ---- animation ------------------------------------------------------------------------
 
-    pub fn animate(&mut self, id: Id, prop: Prop, to: f32, secs: f32, ease: Ease, now: f64) {
+    /// Returns the seconds the motion takes: a running one turned back toward where it came
+    /// from takes the time it already went (`Tween::retarget`).
+    pub fn animate(&mut self, id: Id, prop: Prop, to: f32, secs: f32, ease: Ease, now: f64) -> f32 {
         if !self.alive(id) {
-            return;
+            return 0.0;
         }
         let from = self.prop(id, prop);
+        let running = self
+            .slot(id)
+            .and_then(|i| self.anims.iter().find(|a| a.el == i && a.prop == prop))
+            .map(|a| a.tween)
+            .filter(|t| !t.done(now));
         self.stop(id, prop);
         if secs <= 0.0 || (from - to).abs() < 1e-4 {
             self.set_prop(id, prop, to);
-            return;
+            return 0.0;
         }
-        self.anims.push(Anim { el: id.idx, prop, tween: crate::anim::Tween::new(from, to, now, secs as f64, ease) });
+        let tween = match running {
+            Some(mut t) => {
+                t.retarget(to, now, secs as f64, ease);
+                t
+            }
+            None => crate::anim::Tween::new(from, to, now, secs as f64, ease),
+        };
+        self.anims.push(Anim { el: id.idx, prop, tween });
+        tween.left(now) as f32
     }
 
     /// Ends an animation where it stands (the property keeps its current value).
@@ -1627,8 +1642,8 @@ impl Tree {
     /// `shown: false`, drops its children and resets its offset (a closed flyout); a hide is taken back by
     /// `enter`, `settle` or `keep`.
     pub fn exit(&mut self, id: Id, to: crate::anim::Pose, secs: f32, ease: Ease, now: f64, then: Then) -> f64 {
-        self.animate_pose(id, to, secs, ease, now);
-        let end = now + secs as f64;
+        let took = self.animate_pose(id, to, secs, ease, now);
+        let end = now + f64::from(took);
         self.keep(id);
         if then == Then::Hide && self.alive(id) {
             self.leaving.push((id, end));
@@ -1668,13 +1683,15 @@ impl Tree {
         }
     }
 
-    fn animate_pose(&mut self, id: Id, p: crate::anim::Pose, secs: f32, ease: Ease, now: f64) {
-        self.animate(id, Prop::Opacity, p.opacity, secs, ease, now);
+    /// Returns the seconds the longest of its motions takes.
+    fn animate_pose(&mut self, id: Id, p: crate::anim::Pose, secs: f32, ease: Ease, now: f64) -> f32 {
+        let mut took = self.animate(id, Prop::Opacity, p.opacity, secs, ease, now);
         for (prop, v) in [(Prop::X, p.dx), (Prop::Y, p.dy)] {
             if let Some(v) = v {
-                self.animate(id, prop, v, secs, ease, now);
+                took = took.max(self.animate(id, prop, v, secs, ease, now));
             }
         }
+        took
     }
 
     pub fn animating(&self) -> bool {

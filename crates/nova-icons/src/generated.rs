@@ -101,6 +101,8 @@ use crate::{IconEntry, MasterEntry, OutlineEntry, Variant};
 /// | `FontIncrease` | U+F0024 | Font Increase | Regular | 20/24 | own 24-grid ink box | Larger text. |
 /// | `FontDecrease` | U+F0025 | Font Decrease | Regular | 20/24 | own 24-grid ink box | Smaller text. |
 /// | `SlideText` | U+F0026 | Slide Text | Regular | 16/20/24 | own 24-grid ink box | Text shown on the desktop (desktop lyrics). |
+/// | `Copy` | U+F0027 | Copy | Regular | 16/20/24 | own 24-grid ink box | Menus: copy the song's words or lyrics. |
+/// | `MultiselectLtr` | U+F0028 | Multiselect LTR | Regular | 16/20/24 | own 24-grid ink box | The queue's multi-select toggle. |
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(u8)]
 pub enum Icon {
@@ -292,11 +294,15 @@ pub enum Icon {
     FontDecrease,
     /// Fluent `Slide Text` Regular; key U+F0026. Text shown on the desktop (desktop lyrics).
     SlideText,
+    /// Fluent `Copy` Regular; key U+F0027. Menus: copy the song's words or lyrics.
+    Copy,
+    /// Fluent `Multiselect LTR` Regular; key U+F0028. The queue's multi-select toggle.
+    MultiselectLtr,
 }
 
 impl Icon {
     /// Every icon, in manifest order.
-    pub const ALL: [Icon; 94] = [
+    pub const ALL: [Icon; 96] = [
         Icon::Navigation,
         Icon::WeatherSunny,
         Icon::WeatherMoon,
@@ -391,10 +397,12 @@ impl Icon {
         Icon::FontIncrease,
         Icon::FontDecrease,
         Icon::SlideText,
+        Icon::Copy,
+        Icon::MultiselectLtr,
     ];
 }
 
-pub(crate) static ICONS: [IconEntry; 94] = [
+pub(crate) static ICONS: [IconEntry; 96] = [
     IconEntry {
         name: "Navigation",
         key: '\u{E700}',
@@ -1241,10 +1249,28 @@ pub(crate) static ICONS: [IconEntry; 94] = [
         outline: 91,
         place: [0.0833333358168602, 0.1666666716337204, 0.9166666865348816, 0.8333333134651184],
     },
+    IconEntry {
+        name: "Copy",
+        key: '\u{F0027}',
+        key_str: "\u{F0027}",
+        fluent: "Copy",
+        variant: Variant::Regular,
+        outline: 92,
+        place: [0.125, 0.125, 0.875, 0.875],
+    },
+    IconEntry {
+        name: "MultiselectLtr",
+        key: '\u{F0028}',
+        key_str: "\u{F0028}",
+        fluent: "Multiselect LTR",
+        variant: Variant::Regular,
+        outline: 93,
+        place: [0.0832926407456398, 0.1457926481962204, 0.9166666865348816, 0.8542073369026184],
+    },
 ];
 
 /// `(key, icon)` sorted by key, for `Icon::from_key`.
-pub(crate) static KEYS: [(char, Icon); 94] = [
+pub(crate) static KEYS: [(char, Icon); 96] = [
     ('\u{E700}', Icon::Navigation),
     ('\u{E706}', Icon::WeatherSunny),
     ('\u{E708}', Icon::WeatherMoon),
@@ -1339,9 +1365,11 @@ pub(crate) static KEYS: [(char, Icon); 94] = [
     ('\u{F0024}', Icon::FontIncrease),
     ('\u{F0025}', Icon::FontDecrease),
     ('\u{F0026}', Icon::SlideText),
+    ('\u{F0027}', Icon::Copy),
+    ('\u{F0028}', Icon::MultiselectLtr),
 ];
 
-pub(crate) static OUTLINES: [OutlineEntry; 92] = [
+pub(crate) static OUTLINES: [OutlineEntry; 94] = [
     OutlineEntry { first_master: 0, masters: 3 },   // Navigation regular
     OutlineEntry { first_master: 3, masters: 3 },   // Weather Sunny regular
     OutlineEntry { first_master: 6, masters: 3 },   // Weather Moon regular
@@ -1434,9 +1462,11 @@ pub(crate) static OUTLINES: [OutlineEntry; 92] = [
     OutlineEntry { first_master: 240, masters: 2 }, // Font Increase regular
     OutlineEntry { first_master: 242, masters: 2 }, // Font Decrease regular
     OutlineEntry { first_master: 244, masters: 3 }, // Slide Text regular
+    OutlineEntry { first_master: 247, masters: 3 }, // Copy regular
+    OutlineEntry { first_master: 250, masters: 3 }, // Multiselect LTR regular
 ];
 
-pub(crate) static MASTERS: [MasterEntry; 247] = [
+pub(crate) static MASTERS: [MasterEntry; 253] = [
     MasterEntry { design: 16, verbs: 0, verb_len: 24, points: 0, point_len: 45, ink: [2.0, 3.0, 14.0, 12.0] }, // ic_fluent_navigation_16_regular.svg
     MasterEntry { design: 20, verbs: 24, verb_len: 24, points: 45, point_len: 45, ink: [2.0, 4.0, 18.0, 15.0] }, // ic_fluent_navigation_20_regular.svg
     MasterEntry {
@@ -2804,4 +2834,31 @@ pub(crate) static MASTERS: [MasterEntry; 247] = [
     MasterEntry { design: 16, verbs: 8348, verb_len: 44, points: 15960, point_len: 79, ink: [1.0, 3.0, 15.0, 13.0] }, // ic_fluent_slide_text_16_regular.svg
     MasterEntry { design: 20, verbs: 8392, verb_len: 44, points: 16039, point_len: 79, ink: [2.0, 4.0, 18.0, 16.0] }, // ic_fluent_slide_text_20_regular.svg
     MasterEntry { design: 24, verbs: 8436, verb_len: 44, points: 16118, point_len: 79, ink: [2.0, 4.0, 22.0, 20.0] }, // ic_fluent_slide_text_24_regular.svg
+    MasterEntry { design: 16, verbs: 8480, verb_len: 36, points: 16197, point_len: 61, ink: [2.0, 2.0, 14.0, 14.0] }, // ic_fluent_copy_16_regular.svg
+    MasterEntry { design: 20, verbs: 8516, verb_len: 36, points: 16258, point_len: 61, ink: [3.0, 3.0, 17.0, 17.0] }, // ic_fluent_copy_20_regular.svg
+    MasterEntry { design: 24, verbs: 8552, verb_len: 36, points: 16319, point_len: 61, ink: [3.0, 3.0, 21.0, 21.0] }, // ic_fluent_copy_24_regular.svg
+    MasterEntry {
+        design: 16,
+        verbs: 8588,
+        verb_len: 46,
+        points: 16380,
+        point_len: 85,
+        ink: [1.0009765625, 2.0009765625, 15.0, 13.9990234375],
+    }, // ic_fluent_multiselect_ltr_16_regular.svg
+    MasterEntry {
+        design: 20,
+        verbs: 8634,
+        verb_len: 46,
+        points: 16465,
+        point_len: 85,
+        ink: [2.0009765625, 3.5009765625, 18.0, 16.9990234375],
+    }, // ic_fluent_multiselect_ltr_20_regular.svg
+    MasterEntry {
+        design: 24,
+        verbs: 8680,
+        verb_len: 52,
+        points: 16550,
+        point_len: 91,
+        ink: [1.9990234375, 3.4990234375, 22.0, 20.5009765625],
+    }, // ic_fluent_multiselect_ltr_24_regular.svg
 ];

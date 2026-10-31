@@ -2,12 +2,17 @@
 //! others; the texture goes with its image's last handle.
 use novaui::{render::primitive::Backend, render::software::Software, *};
 /// Every GPU backend available on this machine (D3D11 on Windows, always: WARP at least; Vulkan
-/// where a device is). A Linux machine without one (a CI runner) runs the software half only.
+/// elsewhere, where a device is). A Linux machine without one (a CI runner) runs the software
+/// half only.
+#[cfg(windows)]
+fn gpus(w: i32, h: i32) -> Vec<Box<dyn Backend>> {
+    vec![Box::new(novaui::render::d3d11::D3d11::new(w, h).expect("D3D11 adapter"))]
+}
+
+#[cfg(not(windows))]
 fn gpus(w: i32, h: i32) -> Vec<Box<dyn Backend>> {
     std::env::set_var("DISABLE_VULKAN_OBS_CAPTURE", "1");
     let mut v: Vec<Box<dyn Backend>> = Vec::new();
-    #[cfg(windows)]
-    v.push(Box::new(novaui::render::d3d11::D3d11::new(w, h).expect("D3D11 adapter")));
     if let Ok(g) = novaui::render::vulkan::Vulkan::new(w, h) {
         v.push(Box::new(g));
     }

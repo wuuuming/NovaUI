@@ -52,6 +52,7 @@ pub struct EffectProgram {
 /// An image effect's GPU program as `novaui_shaders::build_effect` compiled it: the module's
 /// HLSL (D3D11) and the SPIR-V of its vertex and fragment entries (Vulkan).
 #[derive(Clone, Copy, Debug)]
+/// HLSL on Windows, SPIR-V elsewhere (`effect_shaders!`): the other platform's is empty.
 pub struct EffectShaders {
     pub hlsl: &'static str,
     pub vs: &'static [u8],
@@ -63,10 +64,30 @@ pub struct EffectShaders {
 #[macro_export]
 macro_rules! effect_shaders {
     ($name:literal) => {
+        // Each platform's renderer's own: HLSL on Windows (D3D11), SPIR-V elsewhere (Vulkan).
         $crate::image::effect::EffectShaders {
-            hlsl: include_str!(concat!(env!("OUT_DIR"), "/novaui-effect-", $name, ".hlsl")),
-            vs: include_bytes!(concat!(env!("OUT_DIR"), "/novaui-effect-", $name, ".vs.spv")),
-            fs: include_bytes!(concat!(env!("OUT_DIR"), "/novaui-effect-", $name, ".fs_effect_main.spv")),
+            hlsl: {
+                #[cfg(windows)]
+                let s: &'static str = include_str!(concat!(env!("OUT_DIR"), "/novaui-effect-", $name, ".hlsl"));
+                #[cfg(not(windows))]
+                let s: &'static str = "";
+                s
+            },
+            vs: {
+                #[cfg(not(windows))]
+                let b: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/novaui-effect-", $name, ".vs.spv"));
+                #[cfg(windows)]
+                let b: &'static [u8] = &[];
+                b
+            },
+            fs: {
+                #[cfg(not(windows))]
+                let b: &'static [u8] =
+                    include_bytes!(concat!(env!("OUT_DIR"), "/novaui-effect-", $name, ".fs_effect_main.spv"));
+                #[cfg(windows)]
+                let b: &'static [u8] = &[];
+                b
+            },
         }
     };
 }

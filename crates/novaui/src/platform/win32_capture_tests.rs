@@ -70,9 +70,12 @@ fn native_release_commits_up_without_synthetic_focus_loss() {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(inputs.len(), 2, "unexpected native release inputs: {inputs:?}");
-        assert!(matches!(inputs[0], Input::Down(..)));
-        assert!(matches!(inputs[1], Input::Up(..)));
+        // The press carries the modifier keys held as it went down (`Input::Mods`), then the
+        // press and its release.
+        assert_eq!(inputs.len(), 3, "unexpected native release inputs: {inputs:?}");
+        assert!(matches!(inputs[0], Input::Mods(..)));
+        assert!(matches!(inputs[1], Input::Down(..)));
+        assert!(matches!(inputs[2], Input::Up(..)));
         SetCapture(a);
         QUEUE.with(|q| q.borrow_mut().clear());
         SetCapture(b);

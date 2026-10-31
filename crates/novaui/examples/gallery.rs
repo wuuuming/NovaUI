@@ -229,6 +229,7 @@ fn main() {
             min_height: 300,
             backend,
             accessibility: true,
+            bounds: None,
         },
         |ui| {
             Box::new(Gallery {

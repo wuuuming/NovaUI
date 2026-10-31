@@ -12,7 +12,7 @@ pub mod effect;
 pub(crate) mod gainmap;
 pub(crate) mod resample;
 
-pub use decode::{decode, Fit};
+pub use decode::{decode, load, Fit};
 
 /// `bytes` are a gain-map JPEG (Ultra HDR): an HDR display can show them brighter than SDR
 /// white (`ImageContent::hdr`). A copy kept of such a picture keeps its bytes, not a re-encoding.

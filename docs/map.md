@@ -24,8 +24,9 @@ app (implements App)            init · event(ui, Event) · after_layout · nc_h
          │   └─ text/shape.rs   runs by face, script and bidi level; harfrust shaping; breaks
          ├─ image/              ImageHandle interning, decode, resample, effects
          └─ render/             Backend trait; batch.rs (shared GPU encoding)
-             ├─ d3d11.rs        Windows (DirectComposition or swap chain; image maker thread)
-             ├─ vulkan.rs       Linux (Wayland, X11), Windows when asked; image maker thread
+             ├─ d3d11.rs        Windows (DirectComposition or swap chain; image maker thread;
+             │                  d3d11/timing.rs: GPU time per frame for the trace)
+             ├─ vulkan.rs       Linux (Wayland, X11); not built for Windows; image maker thread
              └─ software.rs     CPU reference; X11 and Win32 fallback; headless tests
 
 crates/novaui-shaders (build dependency only): prims.wgsl, the renderer's shader; naga → HLSL and
@@ -46,8 +47,9 @@ with its own workers; the per-window state of the hosts is per thread.
 ## 2. Flows
 
 **A turn** (`runner::turn`, `runtime.md` §4). The host blocks until input, a wake, or
-`Pacer::timeout_ms` (next timer, tick, blink, exit end, trim, refresh after an undrawn
-animation). Then `runner::turn` runs, calling the host's `runner::Host` parts in its one order:
+`Pacer::timeout` (next timer, tick or waiting tick (`Clock::frame_at`), blink, exit end, trim, refresh after an undrawn
+animation), to the microsecond: win32 on a high-resolution waitable timer (`LoopSleep`), X11
+and Wayland in `ppoll`. Then `runner::turn` runs, calling the host's `runner::Host` parts in its one order:
 
 1. Wait for the swap chain unless the turn is live (`Host::live`: resize step, modal loop,
    minimised); `ui.now`; `Tree::take_made_images`.
@@ -73,7 +75,7 @@ The first frame, before the window shows, is `runner::start`: `init`, settle, ed
 
 Events created while the app handles events wait for the next turn. That turn comes at once
 when the window can draw (`Ui::has_work` counts queued events); while it is minimised or a frame
-is held, it comes with the next input, wake or deadline (`Pacer::timeout_ms`).
+is held, it comes with the next input, wake or deadline (`Pacer::timeout`).
 
 **A wake from another thread**: `Waker::wake` or a finished task → the hub's host closure
 (`Ui::set_task_wake`) → Win32 `PostMessage(WM_APP_WAKE)`, Linux a pipe write → the loop wakes →
@@ -128,20 +130,20 @@ elements on an evicted page repaint (`take_stale`); a full reset when nothing ca
 | `font_scan.rs` | system font enumeration by name tables (`system_fonts`; also the default chain's source) |
 | `vector.rs` | SVG path parsing (bounded) and A8 rasterising for `Path` |
 | `image/mod.rs` | `ImageHandle`, interning `Pool`, `DROP_VERSION` counter |
-| `image/decode.rs`, `cache.rs`, `resample.rs` | decode with `Fit`, `WeakCache`, streaming triangle resampling |
+| `image/decode.rs`, `cache.rs`, `resample.rs` | decode with `Fit` (and `load` for an app's re-encoding), both within 16384 px a side and 256 MB a decode, refused from the header; `WeakCache`, streaming triangle resampling |
 | `image/effect.rs` | `Effect` registry: a GPU program (compiled at the app's build, `effect_shaders!`) and a CPU function per effect (≤ 32) |
 | `image/gainmap.rs` | gain-map JPEG (Ultra HDR): find the gain map and its `hdrgm` metadata, the HDR rendition for a headroom, half floats |
 | `theme.rs` | `Theme` tokens; `winui_dark`, `material3_dark`/`light`; process-global `install`/`current` |
 | `i18n.rs` | `Strings`: tables per locale, fallback, `{name}` arguments, prefixes for plugins |
 | `widgets/` | `Flyout` + `Place` (placement, enter/exit, rail), `VirtualList` (rows by place, reused; a carried place and rows giving way), `Scrollbar` (its expansion a `Tween`), `TextEdit` (`text_field.rs`), `switch`, `qr` |
-| `trace.rs` | `NOVAUI_TRACE` per-second and per-turn lines, stall count, counting allocator |
+| `trace.rs` | `NOVAUI_TRACE` per-second and per-turn lines, stall count, GPU time per frame (`Backend::gpu_frames`), counting allocator |
 | `audit.rs` | `contract!` checks, on in debug or with `NOVAUI_AUDIT=1` |
 | `error.rs` | `Error` (`Parse`, `Platform`) |
 | `render/primitive.rs` | `Prim`, `Draw`, `Target`, `Backend` trait, Kawase sizes |
 | `render/batch.rs` | the renderer's shader as built (`HLSL`, `spirv`), instance encoding shared by D3D11 and Vulkan |
 | `render/d3d11.rs`, `vulkan.rs`, `software.rs` | the three backends |
-| `platform/mod.rs` | `Window` and its requests, `Options`, `run` (Linux: Wayland, else X11); `OverlayOptions`, `Place`, `run_overlay`, `spawn_overlay` |
-| `platform/win32.rs` (+`win32_vblank.rs`, `window_state.rs`) | Win32 host, file dialogs, clipboard, locale |
+| `platform/mod.rs` | `Window` and its requests, `Options`, `Bounds` (an ordinary window's kept place and size), `run` (Linux: Wayland, else X11); `OverlayOptions`, `Place`, `run_overlay`, `spawn_overlay` |
+| `platform/win32.rs` (+`win32_vblank.rs`, `window_state.rs`) | Win32 host, file dialogs, clipboard, locale; working-set trims (spec §7.0a) |
 | `platform/win32_overlay.rs` | Win32 overlays: the window, its place about its bottom centre, click-through and the pointer hook |
 | `platform/win32_hdr.rs` | the window's output, HDR or SDR: SDR white and peak (`Backend::set_output`) |
 | `platform/wayland.rs` | Wayland host (Vulkan only; falls back to X11 when it cannot open); input methods through `zwp_text_input_v3`; overlays as layer surfaces (`Layered`: margins, the host's own drag) |
@@ -178,7 +180,7 @@ what a mechanism lives as long as; thread is where it runs.
 | Layer | `Tree::set_promoted`, `Layer` | an element · UI | opacity and motion composited without re-raster; material plates | an element |
 | Damage | `geom.rs` `Damage`, `Tree::damage_in`, `widen_for_materials` | a frame · UI | what to redraw and present (≤ 8 rects) | a rect |
 | Tween | `anim::Tween` (a value of time: `at`, `done`, `retarget`); `Anim` = an element's prop + a `Tween`, `Tree::animate` | its holder · UI | an eased value from a to b over d s: element properties (opacity, X, Y, scale, scroll, fg alpha) through the tree; any other (a scrollbar's expansion, an app's motion) held by its owner, who asks for a frame while it is not done | a `Prop` or a holder, an `Ease` |
-| Scroll motion | `anim::Glide` (`to`, `wheel`, `notch`, `hold`, `jump`) on a `GlideSkin` (`WINUI`: 5 ms a dip, 50 ms to 1 s, decelerating; quick notches up to three) | its holder · UI | every scrolled offset moves the same way: a wheel notch, a reveal, a page glide; a drag or a new content jumps; the holder reads `at(now)` and asks for frames while not `done` (`Flyout`'s rows; an app's lists and pages) | a holder, a `GlideSkin` |
+| Scroll motion | `anim::Glide` (`to`, `wheel`, `notch`, `hold`, `jump`) on a `GlideSkin` (`STANDARD`: 3 ms a dip, 80 to 400 ms, cubic ease-out; quick notches up to three; a new end mid-way taken on at the speed it has, `Ease::Carry`) | its holder · UI | every scrolled offset moves the same way: a wheel notch, a reveal, a page glide; a drag or a new content jumps; the holder reads `at(now)` and asks for frames while not `done` (`Flyout`'s rows; an app's lists and pages) | a holder, a `GlideSkin` |
 | Enter/exit | `Tree::enter`/`exit`/`leaving`, `Pose` | an element · UI | appear and disappear motions; hide or keep at the end | a `Pose`, `Then` |
 | Popups | `Ui::add_popup`/`remove_popup`, `input.rs` | the window · UI | outside press closes, anchor press swallowed | an element and anchor |
 | Pointer gestures | `input.rs` `Pointer` | the window · UI | click, double click, drag with slop, capture, cancel, select in a field | listen flags |
@@ -200,7 +202,7 @@ what a mechanism lives as long as; thread is where it runs.
 | Host window requests | `platform/mod.rs` `Window`/`Requests`; each host | the window · UI | close, minimise, maximise, fullscreen, title; an overlay's size and click-through | a request |
 | Overlay | `platform::run_overlay` / `spawn_overlay`, each host's overlay window | the overlay · its own thread (`novaui-overlay`) | a window over the others: transparent, never activated, sized by the app about its bottom centre, moved by its caption, its place kept by the app (`Place`, `Event::Moved`), click-through with hover | an `App`, `OverlayOptions` |
 | Host clipboard | `Ui::io` `clipboard_out`/`paste_wanted`, `clipboard_read`; each host | the window · UI | a field's copy, cut, paste; the app's reads share the read | text |
-| App clipboard and pickers | `Ui::read_clipboard`, `Ui::pick` (`FilePick`); `HostIo`, each host's read, `serve_picks` | a request · UI → host (Linux pickers: a `novaui-wait` thread) | the app's paste, file choice: answered as the app's message, never waited for | a message |
+| App clipboard and pickers | `Ui::read_clipboard`, `Ui::write_clipboard`, `Ui::pick` (`FilePick`); `HostIo`, each host's read, `serve_picks` | a request · UI → host (Linux pickers: a `novaui-wait` thread) | the app's paste, file choice: answered as the app's message, never waited for | a message |
 | Locale | `platform::locale` | a call · UI | the user's language | — |
 | Open | `platform::open` → each OS's `open_now` (ShellExecute, `xdg-open`) | a call · `novaui-open` thread | a URL in the browser, a folder in the file manager, a file in its app; never waited for | a path or URL |
 

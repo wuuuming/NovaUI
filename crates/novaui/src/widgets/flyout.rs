@@ -242,11 +242,12 @@ impl Flyout {
         }
         let now = ui.now;
         ui.tree.set_visual(id, |v| v.hit = false);
-        ui.tree.exit(id, Pose::clear_y(self.rise), OUT_S, OUT, now, Then::Hide);
+        // A close while it still comes in turns it back from where it stands (`Tree::animate`).
+        let end = ui.tree.exit(id, Pose::clear_y(self.rise), OUT_S, OUT, now, Then::Hide);
         for c in ui.tree.children(id) {
             ui.tree.set_state(c, crate::element::State::Disabled, true);
         }
-        Some(now + OUT_S as f64)
+        Some(end)
     }
 
     /// Placed this turn and not yet laid out there (`place` wrote its position).

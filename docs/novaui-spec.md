@@ -29,7 +29,7 @@ frames.
 | `dsl` | `.nui` parser → element templates; bindings, expressions, keys and actions by name. A `Sheet` is opaque (its syntax tree is the parser's): `reads`, `actions`, `component_names`; a `Doc`'s elements by name (`get`, `id`, `names`) | app logic |
 | `text` | font fallback chain, glyph atlas, shaped-run cache, line breaking, per-unit text | where text goes |
 | `image` | `ImageHandle` (interned, freed on drop); encoded bytes to a handle (`decode(bytes, fit)`, fit `Within` or `Square`: JPEG/PNG/WebP/BMP, fitted with Triangle, premultiplied, shared by content while alive); image effects (`effect`); resampling and the decode cache inside | what an image is of |
-| `anim` | curves (`Ease`), `Tween` (an eased value of time), `Glide` (a scroll offset gliding to where it is sent, `GlideSkin`), poses for enter/exit; property animations run on the tree (`Tree::animate`) | policy |
+| `anim` | curves (`Ease`), `Tween` (an eased value of time), `Glide` (a scroll offset gliding to where it is sent, `GlideSkin`), poses for enter/exit; property animations run on the tree (`Tree::animate`). Every motion turned back mid-way toward where it came from (`Tween::retarget`, and through it `Tree::animate`, `enter`/`exit`, a flyout's close) turns where it stands and takes back the time it already went, not a whole duration, as the declarative `tween` retraces its curve: a toggle flipped back never crawls home | policy |
 | `theme` | the token table the DSL resolves names in (`Theme`, `install`); presets: WinUI dark, Material 3 baseline dark / light (`md-sys-*` names) | which theme an app uses |
 | `font_scan` (re-exported) | installed families (`system_fonts`, each file read only to its `name` / `OS/2` tables, once per process); `Tree::set_font(Some(family))` puts one ahead of the default order | which family an app offers |
 | `i18n` | strings by key (`Strings`, `i18n::global()`, `t`): `key = text` tables per locale, owner namespaces (`add_under`, `replace_under`), `{name}` arguments, fallback active → `en` → the key (logged once); `platform::locale()` | the app's tables and its locale choice |
@@ -41,7 +41,7 @@ frames.
 Crate-private: `render` (`primitive` — the closed primitive set and `Backend`; `batch` — instances
 and batches for the GPU backends; `software`, `vulkan`, `d3d11`), `runner` (the turn), `vector`
 (`Shape` fills). With the `backend` feature, `novaui::backend` exports `Backend`, `Software`,
-`Vulkan`, `D3d11` (Windows), the primitives `Draw`, `Prim` and `Target`, and `frame` for headless
+`Vulkan` (not Windows), `D3d11` (Windows), the primitives `Draw`, `Prim` and `Target`, and `frame` for headless
 drivers.
 
 The app talks to `app`, `sched`, `model`, `element`, `dsl` and `platform`.
@@ -178,7 +178,7 @@ Column #face { align: center; gap: 16;
 ```
 
 - `$name` is a binding. The app sets it with `ui.set("title", "…")`, and the framework updates only the elements that read it (through the same change flags).
-- Layout that depends on the window is written in the sheet as expressions: `let`, `latch` (hysteresis: `enter` / `keep`), `tween(value, across, duration)` (eases a value across a flip of `across`), `window.w/h`, the math functions (`min max clamp pow exp lerp smoothstep smoothstep5 …`) and the operators `?:`, `|| &&`, comparisons, `+ - * /`. Any property can take an expression. On each `Doc::update` the declarations are evaluated in source order, but only when the window size or a binding changed, or while a tween is running; an expression property is re-applied only when its value changes. An app's whole size law (scales, latched breakpoints, blocks placed against each other) can live in its sheet; the app supplies only state (`$panel-open`, `$title-rows` …) and reads `doc.num("panel_x")` where Rust code needs a placed value.
+- Layout that depends on the window is written in the sheet as expressions: `let`, `latch` (hysteresis: `enter` / `keep`), `tween(value, across, duration)` (eases a value across a flip of `across`; flipped back while it runs, it retraces its curve from where it stands in the time it already went), `window.w/h`, the math functions (`min max clamp pow exp lerp smoothstep smoothstep5 …`) and the operators `?:`, `|| &&`, comparisons, `+ - * /`. Any property can take an expression. On each `Doc::update` the declarations are evaluated in source order, but only when the window size or a binding changed, or while a tween is running; an expression property is re-applied only when its value changes. An app's whole size law (scales, latched breakpoints, blocks placed against each other) can live in its sheet; the app supplies only state (`$panel-open`, `$title-rows` …) and reads `doc.num("panel_x")` where Rust code needs a placed value.
 - `@key` is a string by key (`text: @settings.title`, or `Text @settings.title`): resolved
   through `Ui::t` when applied, and wherever a value goes (a literal, a component argument, a
   binding's value `Val::Key`, an expression's result). When `ui.strings` changes (a table added,
@@ -282,7 +282,9 @@ Column #face { align: center; gap: 16;
 - typing replaces the selection; text scrolls horizontally to keep the caret in view.
 
 The app's own clipboard reads go through the same host read: `Ui::read_clipboard(done)`
-delivers `done(text)` as a message in a later turn. `Ui::pick(FilePick, done)` asks the system's
+delivers `done(text)` as a message in a later turn; `Ui::write_clipboard(text)` is written by
+the host at the end of the turn, as a field's Ctrl+C (`Ui::take_clipboard` takes it instead, for
+a headless driver). `Ui::pick(FilePick, done)` asks the system's
 file picker (files to open, a folder, a place to save) and delivers `done(paths)` once it is
 answered (none: cancelled). The UI thread never waits on another process for either: Linux's
 pickers are child processes waited for on a thread of their own, Windows' picker is modal to
@@ -316,7 +318,7 @@ gap, shift, flip }`: below / above / right / left, flipping to the roomier side)
 host's `max-height`, the window's room) and scroll, then starts the motion (`enter_as` gives one
 opening its own). `close` reverses it. `wheel`, `reveal` and `sync_rail` / `rail_event` scroll
 it: a wheel notch, a key's reveal and a page from the rail glide (`Glide`, the flyout's `glide`
-skin, WinUI's by default; `sync_rail` stands the rows where the glide is and asks for frames
+skin, `GlideSkin::STANDARD` by default; `sync_rail` stands the rows where the glide is and asks for frames
 while it moves), a dragged thumb and an opening's centred row move it at once. The widget holds no ids: the host and rail parts are passed in, as `Scrollbar::sync` takes
 its parts. Widths and row heights are the sheet's; the widget sets none.
 
@@ -336,6 +338,14 @@ list-item text-input label heading image menu menu-item dialog`), `label` (the n
 announced by, `@key` following the locale), `focusable`, and a slider's `value`, `min`, `max`,
 `step`. What is not written is inferred: an element is focusable when it has an `on-click`,
 hears drags (`drag-events`) or is a text field.
+A menu item that is one of a set (a dropdown's rows: `Semantics::checked`) is announced as a radio
+item, checked or not.
+
+A pointer press carries the modifier keys held as it went down: every host sends `Input::Mods`
+just before `Input::Down` (Win32 `GetKeyState`, X11 the button event's state, Wayland the
+keyboard's xkb state), and `Ui::press_mods` is what a `Click`, `RightClick` or `Press` was pressed
+with (Shift+press extends a text field's selection; a list reads Shift and Ctrl). A key's
+modifiers are only the key's.
 
 The focus (`focus.rs`, `Ui::focus`; `Ui::focused_field` when it is a text field):
 
@@ -401,7 +411,12 @@ client that goes away (Linux) stops it.
 One WGSL source (`novaui-shaders/src/prims.wgsl`, plus the app's image effects) is the only GPU
 shader. naga translates it to HLSL (D3D11) and SPIR-V (Vulkan) when the program is built
 (novaui-shaders: novaui's build script for the renderer, the app's for its effects), so no shader
-compiler ships in a program; D3D11 compiles the HLSL at start with the system's compiler. A
+compiler ships in a program; D3D11 compiles the HLSL at start with the system's compiler: once a
+process, each built-in program on its own thread, begun as `platform::run` starts so it runs
+beside the driver's start of the device (one after another they were 130 ms of a 350 ms device);
+every later device (an overlay, one made again after a loss) takes the bytecode as it is. The
+Win32 host finds the fonts (`text::check_fonts`) on a thread of its own while the device is made;
+no window opens without a font. A
 backend makes the built-in programs when it is made and each image effect on its own at the
 first draw after it is registered, whenever that was: one that a backend cannot make has its
 draws skipped there, and nothing else changes. `render::batch::encode` turns primitives into instances and batches for both, so a frame
@@ -410,7 +425,7 @@ issues the same draws on either API. `render::software` is the reference every G
 | Backend | Platforms | Window | Notes |
 |---|---|---|---|
 | `d3d11` | Windows | flip-model swap chain shown through DirectComposition, else on the window (§7.1); `Present1` dirty rects, frame-latency object | default on Windows |
-| `vk` | Windows, Linux | FIFO swap chain, per-image damage history, BGRA via 1:1 blit | default on Linux; `backend=vk` on Windows |
+| `vk` | Linux | FIFO swap chain, per-image damage history, BGRA via 1:1 blit | default on Linux. Not built for Windows: a Windows program carries one GPU renderer (D3D11) and its shaders only (HLSL there, SPIR-V elsewhere: `effect_shaders!`) |
 | `sw` | all | GDI (Win32) / `XPutImage` (X11) | fallback, reference |
 
 The Vulkan backend keeps every image in `GENERAL` layout with a full memory barrier after each
@@ -507,6 +522,20 @@ with `wp_viewporter`, else the outputs' integer scale; keys through xkbcommon in
 (`platform::linux::prepare_env`, guarded by `NOVAUI_ENV_READY`), e.g. the NVIDIA Wayland Vulkan
 producer link Debian's 535 packages lack.
 
+### 7.0a Memory a window keeps (Win32)
+
+What a window touched once stays in its working set while nothing asks the system for memory.
+The Win32 host hands it back (`SetProcessWorkingSetSize(-1, -1)`; the pages stay committed and
+come back on first touch, from the standby list) at three points, an overlay at none:
+
+- 8 s after the window opened, at the first wait after it: what starting touched (files read,
+  fonts parsed, the first images) goes, about as much again as a running window needs;
+- as the window is minimised, with the backend's `trim` (its pools, `IDXGIDevice3::Trim`): only
+  what keeps running comes back (an app's sound, an overlay it keeps drawing);
+- while minimised, 2 s after the app's work grew the working set 4 MB past the level it settled
+  at 2 s after the last trim (a player's next song: its picture decoded, its list saved). What
+  goes on running comes back after every trim, so growth is measured from that level.
+
 ### 7.1 Live resize (Win32)
 
 When the user drags the border, Win32 runs its own modal loop inside `DefWindowProc`:
@@ -537,6 +566,18 @@ When the user drags the border, Win32 runs its own modal loop inside `DefWindowP
 - Textures of images of 256\u00d7256 px and more are made on a thread of their own (the device is
   free-threaded): such an image shows from the frame after the one that first drew it. Smaller
   ones are made at once.
+
+### 7.1a Where a window opens
+
+An ordinary window's place and size (`platform::Bounds`: its rectangle when neither maximized
+nor minimized, in the host's measure of the screen, and whether it is maximized) is
+`Window::bounds`; `Event::Moved` says it changed (moved, resized, maximized or restored). The app
+keeps it and hands it back (`Options::bounds`): the window is made there, so on that display
+and at its DPI from the start (Windows, X11: `USPosition`/`USSize` and `_NET_WM_STATE` before
+the map), maximized if it was. Bounds whose top strip lies on no display's work area by
+120 × 16 pixels, or larger than the display, are not used: the window opens at `width` ×
+`height` where the system puts a new one. Wayland keeps a size and maximized only (a client has
+no place on the screen).
 
 ### 7.2 Overlays
 

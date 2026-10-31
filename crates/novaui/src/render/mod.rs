@@ -11,6 +11,9 @@ pub mod batch;
 pub mod d3d11;
 pub mod primitive;
 pub mod software;
+/// Vulkan: Linux's renderer. Not on Windows, whose renderer is D3D11 (and the CPU one when it
+/// cannot be had): a Windows program carries no second GPU renderer nor its shaders.
+#[cfg(not(windows))]
 pub mod vulkan;
 
 pub use primitive::Backend;

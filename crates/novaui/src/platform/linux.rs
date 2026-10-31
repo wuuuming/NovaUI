@@ -410,8 +410,8 @@ pub struct IdleTrim {
 
 impl IdleTrim {
     /// Before the loop waits `timeout` ms (0: not at all).
-    pub fn before_wait(&mut self, timeout: c_int) {
-        if timeout == 0 {
+    pub fn before_wait(&mut self, timeout: Option<f64>) {
+        if timeout == Some(0.0) {
             self.untrimmed = true;
         } else if std::mem::take(&mut self.untrimmed) {
             trim_heap();

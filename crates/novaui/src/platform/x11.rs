@@ -267,6 +267,14 @@ fn transparent_backend(x: &X, w: i32, h: i32) -> Result<Box<dyn Backend>, String
 /// The X server would clear a window to its background on every resize, before our frame at the
 /// new size lands (a black flash per step of a live resize); the gravity keeps the old contents
 /// in place instead. The top-level window and the Vulkan child are made so.
+/// Kept bounds a window can open at on a screen of `size`: their top strip (where it is dragged
+/// from) on it by at least 120 × 16 pixels, and no bigger than it.
+fn reachable(b: &super::Bounds, (sw, sh): (c_int, c_int)) -> bool {
+    let (l, r) = (b.x.max(0), (b.x + b.width).min(sw));
+    let (t, bt) = (b.y.max(0), (b.y + 32).min(sh));
+    r - l >= 120 && bt - t >= 16 && b.width <= sw && b.height <= sh
+}
+
 unsafe fn plain_window(
     xl: &xlib::Xlib,
     dpy: *mut xlib::Display,
@@ -333,7 +341,13 @@ impl X {
         let screen = (xl.XDefaultScreen)(dpy);
         let root = (xl.XRootWindow)(dpy, screen);
         let scale = dpi_scale(&xl, dpy);
-        let (w, h) = ((opts.width as f32 * scale) as u32, (opts.height as f32 * scale) as u32);
+        // Where it last stood (`Options::bounds`), if its top strip is still on the screen.
+        let screen_size = ((xl.XDisplayWidth)(dpy, screen), (xl.XDisplayHeight)(dpy, screen));
+        let kept = opts.bounds.filter(|b| overlay.is_none() && reachable(b, screen_size));
+        let (w, h) = match kept {
+            Some(b) => (b.width as u32, b.height as u32),
+            None => ((opts.width as f32 * scale) as u32, (opts.height as f32 * scale) as u32),
+        };
         let argb = match overlay {
             Some(_) => Some(overlay::argb_visual(&xl, dpy, root).ok_or("no 32-bit visual for a transparent window")?),
             None => None,
@@ -386,6 +400,20 @@ impl X {
             protos.push(atoms.sync_request);
         }
         (xl.XSetWMProtocols)(dpy, win, protos.as_mut_ptr(), protos.len() as c_int);
+        if kept.is_some_and(|b| b.maximized) {
+            // Maximized from the first map (EWMH: the state set before the window is mapped).
+            let state = [atoms.max_h, atoms.max_v];
+            (xl.XChangeProperty)(
+                dpy,
+                win,
+                atoms.net_wm_state,
+                xlib::XA_ATOM,
+                32,
+                xlib::PropModeReplace,
+                state.as_ptr() as *const c_uchar,
+                2,
+            );
+        }
         // No WM decorations: the app's title bar is the caption (Motif hints: flags=2, decorations=0).
         let hints: [c_long; 5] = [2, 0, 0, 0, 0];
         (xl.XChangeProperty)(
@@ -403,6 +431,13 @@ impl X {
             sh.flags = xlib::PMinSize;
             sh.min_width = (opts.min_width as f32 * scale) as c_int;
             sh.min_height = (opts.min_height as f32 * scale) as c_int;
+            if let Some(b) = kept {
+                // The user's own place and size (ICCCM's USPosition / USSize): the window
+                // manager keeps them rather than placing it.
+                (xl.XMoveWindow)(dpy, win, b.x, b.y);
+                sh.flags |= xlib::USPosition | xlib::USSize;
+                (sh.x, sh.y, sh.width, sh.height) = (b.x, b.y, b.width, b.height);
+            }
             (xl.XSetWMNormalHints)(dpy, win, &mut sh);
         }
         set_title(&xl, dpy, win, &atoms, opts.title.clone());
@@ -443,6 +478,18 @@ impl X {
             place
         });
         Ok((x, place))
+    }
+
+    /// The window's bounds now (`Window::bounds`): its rectangle on the root while not
+    /// maximized, else the one it had (`was`), with whether it is maximized.
+    unsafe fn bounds(&self, was: Option<super::Bounds>) -> Option<super::Bounds> {
+        if self.is_maximized() {
+            return was.map(|b| super::Bounds { maximized: true, ..b });
+        }
+        let (w, h) = self.size();
+        let (mut x, mut y, mut child) = (0, 0, 0);
+        (self.xl.XTranslateCoordinates)(self.dpy, self.win, self.root, 0, 0, &mut x, &mut y, &mut child);
+        Some(super::Bounds { x, y, width: w, height: h, maximized: false })
     }
 
     unsafe fn size(&self) -> (i32, i32) {
@@ -743,6 +790,7 @@ impl runner::Host for XHost {
                 super::woken(&self.pending, ui);
             }
             let mut resized = None;
+            let mut bounds_changed = false;
             while (self.x.xl.XPending)(self.x.dpy) > 0 {
                 let mut ev: xlib::XEvent = std::mem::zeroed();
                 (self.x.xl.XNextEvent)(self.x.dpy, &mut ev);
@@ -781,6 +829,7 @@ impl runner::Host for XHost {
                     xlib::ConfigureNotify => {
                         let c = ev.configure;
                         self.placed_at.get_or_insert(self.now());
+                        bounds_changed = true;
                         if c.width > 0 && c.height > 0 {
                             resized = Some((c.width, c.height));
                             if let Some(o) = &mut self.overlay {
@@ -794,6 +843,7 @@ impl runner::Host for XHost {
                     xlib::Expose => ui.tree.expose(),
                     xlib::PropertyNotify if ev.property.atom == self.x.atoms.net_wm_state => {
                         super::set_maximized(ui, self.x.is_maximized());
+                        bounds_changed = true;
                     }
                     xlib::MotionNotify => {
                         let m = ev.motion;
@@ -843,6 +893,7 @@ impl runner::Host for XHost {
                                     self.caption.press(b.x, b.y, &mut ui.window);
                                 }
                                 self.pressed_in_client = true;
+                                ui.input(Input::Mods(mods(b.state)));
                                 ui.input(Input::Down(b.x, b.y, button));
                                 // The window menu takes the pointer: the release is the window
                                 // manager's.
@@ -933,6 +984,14 @@ impl runner::Host for XHost {
                     xlib::SelectionRequest => self.x.selection_request(&ev.selection_request),
                     xlib::SelectionClear => self.x.clipboard = None,
                     _ => {}
+                }
+            }
+            // An ordinary window's bounds, for the app to keep (`Window::bounds`).
+            if bounds_changed && self.overlay.is_none() {
+                let bounds = self.x.bounds(ui.window.bounds);
+                if bounds != ui.window.bounds {
+                    ui.window.bounds = bounds;
+                    ui.events.push(crate::Event::Moved);
                 }
             }
             // Moved or resized: maybe onto another monitor (once the window has been still for
@@ -1090,6 +1149,7 @@ pub(super) fn run_overlay(
         min_height: 1,
         backend: opts.backend,
         accessibility: false,
+        bounds: None,
     };
     // SAFETY: the module contract.
     let (x, place) = unsafe { X::open(&main, Some(&opts)) }.map_err(crate::Error::Platform)?;
@@ -1132,6 +1192,9 @@ fn host_loop(
         };
         let mut ui = Ui::new(cw, ch, scale);
         ui.window.handle = x.win as isize;
+        if overlay.is_none() {
+            ui.window.bounds = x.bounds(None);
+        }
         if let Some(o) = &overlay {
             ui.window.place = Some(o.place);
             let work = overlay::work_area(&x);
@@ -1177,14 +1240,21 @@ fn host_loop(
         loop {
             // Block until X input, a wake, or the next scheduled frame.
             if (host.x.xl.XPending)(host.x.dpy) == 0 {
-                let timeout = pacer.timeout_ms(&ui, runner::Host::now(&host), true, false).map_or(-1, |ms| ms as c_int);
+                let timeout = pacer.timeout(&ui, runner::Host::now(&host), true, false);
                 untrimmed.before_wait(timeout);
-                if timeout != 0 {
+                if timeout != Some(0.0) {
                     let mut p = [
                         libc::pollfd { fd: xfd, events: libc::POLLIN, revents: 0 },
                         libc::pollfd { fd: fds[0], events: libc::POLLIN, revents: 0 },
                     ];
-                    libc::poll(p.as_mut_ptr(), 2, timeout);
+                    // To the microsecond (`runner`): poll's whole milliseconds miss a refresh.
+                    let ts = runner::timespec(timeout);
+                    libc::ppoll(
+                        p.as_mut_ptr(),
+                        2,
+                        ts.as_ref().map_or(std::ptr::null(), |t| t as *const _),
+                        std::ptr::null(),
+                    );
                 }
             }
             if !runner::turn(&mut host, &mut ui, app.as_mut(), &mut pacer) {
