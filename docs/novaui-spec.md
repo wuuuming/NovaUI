@@ -121,7 +121,11 @@ Every primitive has the same expression in WGSL (GPU) and in `render::software` 
   process, read in parallel: about 30 ms on Windows), wherever their files are; a family's
   upright faces of normal width are used. Fallback is chosen per grapheme cluster (a letter and
   its marks, a conjunct, an emoji sequence): the first family with a glyph for each of its chars,
-  default-ignorable ones (joiners, variation selectors) aside. No font at all is an `Error` from
+  default-ignorable ones (joiners, variation selectors) aside. With the bundle present the first
+  miss triggers the system scan. If the named families miss, OpenType Unicode-range hints select
+  candidates; the face's glyph map must cover the cluster before it joins the chain. On Linux
+  the scan includes XDG data font directories, `/run/host/fonts` and the directory entries of
+  `/etc/fonts/fonts.conf`. No font at all is an `Error` from
   `platform::run`.
   An app's `Tree::set_font(Some(family))` goes first; the chain still supplies what it lacks.
 - `Tree::text_lines(id, width)`: how many lines an element's text takes at a width, broken as

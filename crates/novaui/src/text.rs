@@ -878,7 +878,9 @@ pub struct Text {
     /// Reuse curve extents across different strings, including when the text cache rolls over.
     ink_glyphs: HashMap<(u8, u8, u16), f32>,
     /// The face each (char, weight) falls back to (`pick_cluster`).
-    picks: std::cell::RefCell<HashMap<(char, u16), Pick>>,
+    picks: HashMap<(char, u16), Pick>,
+    /// None while the bundled families have covered everything requested.
+    scanned: Option<&'static [crate::font_scan::ScannedFace]>,
     pages: [Page; PAGES],
     /// The page being filled.
     cur: usize,
@@ -931,8 +933,9 @@ fn primary_pick(families: &[Family], weight: u16) -> Pick {
 }
 
 fn pick_cluster(
-    families: &[Family],
-    picks: &std::cell::RefCell<HashMap<(char, u16), Pick>>,
+    families: &mut Vec<Family>,
+    picks: &mut HashMap<(char, u16), Pick>,
+    scanned: &mut Option<&[crate::font_scan::ScannedFace]>,
     g: &str,
     weight: u16,
 ) -> Pick {
@@ -940,19 +943,56 @@ fn pick_cluster(
     let Some(c) = cs.next() else { return primary_pick(families, weight) };
     let single = cs.next().is_none();
     if single {
-        if let Some(&hit) = picks.borrow().get(&(c, weight)) {
+        if let Some(&hit) = picks.get(&(c, weight)) {
             return hit;
         }
     }
     let has = |fam: &Family, c: char| fam.faces[fam.face(weight)].font.glyph_id(c).0 != 0;
-    let all = |fam: &Family| g.chars().all(|c| has(fam, c) || shape::ignorable(c));
-    let hit = families
-        .iter()
-        .position(all)
+    let all = |fam: &Family| g.chars().all(|c| shape::ignorable(c) || has(fam, c));
+    let mut found = families.iter().position(all);
+    if found.is_none() {
+        if scanned.is_none() {
+            // Preserve the system fallback order, but don't pay for it until the bundle misses.
+            *scanned = Some(crate::font_scan::scanned());
+            let start = families.len();
+            families.extend(MORE.iter().map(|n| scanned_family(n)).filter(|f| !f.faces.is_empty()));
+            found = families[start..].iter().position(all).map(|i| start + i);
+        }
+        if found.is_none() && families.len() <= u8::MAX as usize {
+            let mask = crate::font_scan::range_mask(c);
+            let mut candidates: Vec<_> = scanned
+                .unwrap_or_default()
+                .iter()
+                .filter(|f| mask == 0 || f.ranges == 0 || f.ranges & mask != 0)
+                .collect();
+            candidates
+                .sort_by_key(|f| (!f.normal_width, f.italic, if f.variable { 0 } else { f.weight.abs_diff(weight) }));
+            for f in candidates {
+                let path = f.path.to_string_lossy();
+                let Some(bytes) = map_file(&path) else { continue };
+                let Ok(font) = FontRef::try_from_slice_and_index(bytes, f.index) else { continue };
+                if !g.chars().all(|c| shape::ignorable(c) || font.glyph_id(c).0 != 0) {
+                    continue;
+                }
+                let faces = if f.variable {
+                    WEIGHTS.iter().filter_map(|&w| Face::new(bytes, f.index, Some(w), w)).collect()
+                } else {
+                    Face::new(bytes, f.index, None, f.weight).into_iter().collect()
+                };
+                let fam = Family { faces };
+                if fam.faces.is_empty() {
+                    continue;
+                }
+                found = Some(families.len());
+                families.push(fam);
+                break;
+            }
+        }
+    }
+    let hit = found
         .or_else(|| families.iter().position(|f| has(f, c)))
-        .map_or(primary_pick(families, weight), |i| (i as u8, families[i].face(weight) as u8));
+        .map_or_else(|| primary_pick(families, weight), |i| (i as u8, families[i].face(weight) as u8));
     if single {
-        let mut picks = picks.borrow_mut();
         if picks.len() >= PICK_CAP {
             picks.clear();
         }
@@ -1094,16 +1134,17 @@ const MORE: &[&str] = &[
 
 /// The chain: the bundled Noto when it is there, else the system's Latin and CJK families; then
 /// the system's others for what those lack. Empty when no font at all loads.
-fn families() -> Vec<Family> {
+fn families() -> (Vec<Family>, Option<&'static [crate::font_scan::ScannedFace]>) {
     let first =
         |names: &[&'static str]| names.iter().map(|&n| (n, scanned_family(n))).find(|(_, f)| !f.faces.is_empty());
     let mut chain = bundled_families();
+    if !chain.is_empty() {
+        return (chain, None);
+    }
     let mut used = Vec::new();
-    if chain.is_empty() {
-        for (name, f) in first(LATIN).into_iter().chain(first(CJK)) {
-            used.push(name);
-            chain.push(f);
-        }
+    for (name, f) in first(LATIN).into_iter().chain(first(CJK)) {
+        used.push(name);
+        chain.push(f);
     }
     for &n in MORE.iter().filter(|n| !used.contains(n)) {
         let f = scanned_family(n);
@@ -1111,12 +1152,18 @@ fn families() -> Vec<Family> {
             chain.push(f);
         }
     }
-    chain
+    let catalog = crate::font_scan::scanned();
+    if chain.is_empty() {
+        if let Some(f) = catalog.iter().find_map(|f| load(&f.path.to_string_lossy(), f.index, None, f.weight)) {
+            chain.push(Family { faces: vec![f] });
+        }
+    }
+    (chain, Some(catalog))
 }
 
 /// Whether any font loads (`platform::run` reports none as an error before a `Tree` exists).
 pub(crate) fn check_fonts() -> Result<(), crate::Error> {
-    if families().is_empty() {
+    if families().0.is_empty() {
         return Err(crate::Error::Platform(
             "no usable font: install one (or put the bundle in fonts/ beside the program, or set NOVAUI_FONTS)".into(),
         ));
@@ -1131,11 +1178,7 @@ impl Text {
             self.slots.len(),
             self.icons.len(),
             self.runs.len(),
-            self.measures.len()
-                + self.shaped.len()
-                + self.ink_count
-                + self.ink_glyphs.len()
-                + self.picks.borrow().len(),
+            self.measures.len() + self.shaped.len() + self.ink_count + self.ink_glyphs.len() + self.picks.len(),
         ]
     }
     /// The text system with the default chain.
@@ -1144,10 +1187,11 @@ impl Text {
     ///
     /// When no font loads at all; `platform::run` reports that as an `Error` before it makes one.
     pub fn new() -> Self {
-        let families = families();
+        let (families, scanned) = families();
         assert!(!families.is_empty(), "no usable font");
         Text {
             families,
+            scanned,
             font: None,
             atlas: vec![0; (ATLAS * ATLAS) as usize],
             slots: HashMap::default(),
@@ -1197,7 +1241,8 @@ impl Text {
                 Some(fam)
             }
         };
-        let mut families = families();
+        let (mut families, scanned) = families();
+        self.scanned = scanned;
         families.splice(0..0, first);
         self.families = families;
         self.font = family.map(str::to_owned);
@@ -1208,7 +1253,7 @@ impl Text {
         self.ink_spans.clear();
         self.ink_count = 0;
         self.ink_glyphs.clear();
-        self.picks.get_mut().clear();
+        self.picks.clear();
         true
     }
 
@@ -1288,9 +1333,10 @@ impl Text {
         if let Some(sh) = self.shaped.get(weight, t) {
             return sh;
         }
-        let (families, picks) = (&self.families, &self.picks);
-        let pick = |g: &str| pick_cluster(families, picks, g, weight);
-        let sh = Rc::new(self.shaper.shape(families, t, &pick));
+        let pick = &mut |families: &mut Vec<Family>, g: &str| {
+            pick_cluster(families, &mut self.picks, &mut self.scanned, g, weight)
+        };
+        let sh = Rc::new(self.shaper.shape(&mut self.families, t, pick));
         self.shaped.insert(weight, t.to_owned(), sh.clone());
         sh
     }
@@ -1962,6 +2008,28 @@ mod exact_bounds {
 
 #[cfg(test)]
 mod drag_atlas {
+    /// A Thai glyph missing from the Latin chain shapes and draws from the scanned face.
+    #[test]
+    fn a_missing_glyph_draws_from_a_scanned_face() {
+        let Some(dir) = std::env::var_os("NOVA_FONTS_DIR").map(std::path::PathBuf::from) else {
+            eprintln!("skipped: NOVA_FONTS_DIR not set");
+            return;
+        };
+        let mut t = super::Text::new();
+        t.families =
+            vec![super::Family { faces: super::load_variable(&dir.join("NotoSans-VF.ttf").to_string_lossy(), &[400]) }];
+        static CATALOG: std::sync::OnceLock<Vec<crate::font_scan::ScannedFace>> = std::sync::OnceLock::new();
+        t.scanned = Some(CATALOG.get_or_init(|| crate::font_scan::faces_in(&dir.join("NotoSansThai-VF.ttf"))));
+        use ab_glyph::Font;
+        assert_eq!(t.families[0].faces[0].font.glyph_id('ก').0, 0);
+        let g = &t.shaped("ก", 400).glyphs[0];
+        assert_eq!(g.fam, 1);
+        assert_ne!(g.id, 0);
+        assert!(t.slot(g.fam, g.face, ab_glyph::GlyphId(g.id), 96, 0).is_some());
+        t.shaped("กก", 400);
+        assert_eq!(t.families.len(), 2);
+    }
+
     /// A resize of a page of large text: four lines of mixed CJK / Latin at a size sweeping 24 -> 36 px
     /// over 400 frames. The atlas must hold the whole drag without starting over.
     #[test]

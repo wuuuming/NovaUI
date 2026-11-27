@@ -127,7 +127,7 @@ elements on an evicted page repaint (`take_stale`); a full reset when nothing ca
 | `dev.rs` | debug builds: element labels and last damage (`TreeDev`), the inspector (F12) and the reload banner (`Dev`) |
 | `text.rs` | font loading (bundle, `NOVAUI_FONTS`, the system's by family name), fallback order (per grapheme cluster), measure, line breaking and layout in visual order, carets, glyph atlas, icon and path marks, `FontMetrics` |
 | `text/shape.rs` | `Shaper` (harfrust plans per face, script, direction), `Shaped` (glyphs in ems, runs, clusters with UAX #14 break opportunities, paragraphs' levels), bidi levels (UAX #9), `visual` (a line's runs in visual order, L2) |
-| `font_scan.rs` | system font enumeration by name tables (`system_fonts`; also the default chain's source) |
+| `font_scan.rs` | system font enumeration by name tables (`system_fonts`); OS/2 coverage hints for the fallback chain; Linux font directories |
 | `vector.rs` | SVG path parsing (bounded) and A8 rasterising for `Path` |
 | `image/mod.rs` | `ImageHandle`, interning `Pool`, `DROP_VERSION` counter |
 | `image/decode.rs`, `cache.rs`, `resample.rs` | decode with `Fit` (and `load` for an app's re-encoding), both within 16384 px a side and 256 MB a decode, refused from the header; `WeakCache`, streaming triangle resampling |

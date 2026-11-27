@@ -132,7 +132,12 @@ impl Shaper {
 
     /// Shapes `t` (no `\r`) at `weight` over `families`; `pick` is the face fallback for a
     /// cluster (the first family with every glyph it needs).
-    pub fn shape(&mut self, families: &[Family], t: &str, pick: &dyn Fn(&str) -> Pick) -> Shaped {
+    pub fn shape(
+        &mut self,
+        families: &mut Vec<Family>,
+        t: &str,
+        pick: &mut dyn FnMut(&mut Vec<Family>, &str) -> Pick,
+    ) -> Shaped {
         let (levels, paras) = bidi(t);
         let level_at = |b: usize| levels.get(b).copied().unwrap_or(0);
         // Each grapheme's face, script and level; hard breaks are left out. A grapheme of no
@@ -141,7 +146,7 @@ impl Shaper {
         for (b, g) in t.grapheme_indices(true) {
             let c = g.chars().next().unwrap_or(' ');
             if !hard_break(c) {
-                gs.push((b as u32, (b + g.len()) as u32, pick(g), script_of(c), level_at(b)));
+                gs.push((b as u32, (b + g.len()) as u32, pick(families, g), script_of(c), level_at(b)));
             }
         }
         let mut last = None;
