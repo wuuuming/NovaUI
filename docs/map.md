@@ -122,7 +122,7 @@ elements on an evicted page repaint (`take_stale`); a full reset when nothing ca
 | `style.rs` | `Layout`, `Visual`, `Content` and its parts, `Material`, `Shadow`, `Cursor`, `Units` |
 | `geom.rs` | `Rect`, `Color`, `Damage`, `erf` |
 | `anim.rs` | `Prop`, `Ease`, `Tween` (an eased value of time), `Glide` + `GlideSkin` (a scroll offset's motion and the wheel's speed), `Then`, `Pose`, `Anim` (an element's tween) |
-| `dsl.rs`, `dsl/units.rs` | lexer, parser, `Sheet`, `Doc`, expressions (`Eval`), `Profile`/`parse_fragment`, property table (`apply`); per-unit text programs |
+| `dsl.rs`, `dsl/units.rs` | lexer, parser, `Sheet`, `Doc`, expressions (`Eval`), `Profile`/`parse_fragment`, property table (`apply`); per-unit text programs (registers resolved at mount, segmentation kept until the text or timing changes, results written into the text's `Units`) |
 | `dsl/reload.rs` | debug builds: `Doc::watch`, live reload (each build made again aside from the old and the new sheet, merged three ways into the live elements) |
 | `dev.rs` | debug builds: element labels and last damage (`TreeDev`), the inspector (F12) and the reload banner (`Dev`) |
 | `text.rs` | font loading (bundle, `NOVAUI_FONTS`, the system's by family name), fallback order (per grapheme cluster), measure, line breaking and layout in visual order, carets, glyph atlas, icon and path marks, `FontMetrics` |

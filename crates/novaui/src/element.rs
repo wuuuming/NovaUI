@@ -1114,6 +1114,17 @@ impl Tree {
         self.content_changed(id.idx, true);
     }
 
+    /// Edit the text's kept drawing buffers and damage it only if a unit changed.
+    pub(crate) fn edit_units(&mut self, id: Id, edit: impl FnOnce(&mut crate::style::Units) -> bool) {
+        let slot = &mut self.els[id.idx as usize].visual.units;
+        let first = slot.is_none();
+        let units = slot.get_or_insert_with(Default::default);
+        if edit(std::rc::Rc::make_mut(units)) || first {
+            self.why(id.idx, "visual");
+            self.flag(id.idx, PAINT);
+        }
+    }
+
     /// Changes what a text's units are cut from (`El::unit_src`; made when first set).
     pub fn set_unit_src(&mut self, id: Id, f: impl FnOnce(&mut crate::style::UnitSrc)) {
         if !self.alive(id) {
@@ -2614,8 +2625,8 @@ impl Tree {
                 }
             }
         }
-        let changed = std::mem::take(&mut self.changed);
-        for i in changed {
+        let mut changed = std::mem::take(&mut self.changed);
+        for i in changed.drain(..) {
             let invalid = std::mem::take(&mut self.els[i as usize].invalid);
             if invalid == 0 || !self.els[i as usize].alive {
                 continue;
@@ -2652,6 +2663,9 @@ impl Tree {
                 self.update_comp(i);
             }
         }
+        // Keep the queue's storage for the next frame's paint changes.
+        changed.append(&mut self.changed);
+        self.changed = changed;
     }
 
     /// A promoted element's composite (its layer quad and shadow in the parent target): recompute

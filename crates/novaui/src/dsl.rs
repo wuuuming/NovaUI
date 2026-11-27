@@ -1194,6 +1194,23 @@ fn num(v: &Val, sheet: &Sheet) -> f32 {
     }
 }
 
+fn equal(sheet: &Sheet, a: &Val, b: &Val) -> bool {
+    if matches!(a, Val::Num(_) | Val::Bool(_)) || matches!(b, Val::Num(_) | Val::Bool(_)) {
+        num(a, sheet) == num(b, sheet)
+    } else {
+        a == b
+    }
+}
+
+fn mix(sheet: &Sheet, a: Option<&Val>, b: Option<&Val>, t: f32) -> Val {
+    let t = t.clamp(0.0, 1.0);
+    if let (Some(c), Some(d)) = (a.and_then(|v| resolve_color(sheet, v)), b.and_then(|v| resolve_color(sheet, v))) {
+        return Val::Color(std::array::from_fn(|i| c[i] + (d[i] - c[i]) * t));
+    }
+    let n = |v: Option<&Val>| v.map_or(0.0, |v| num(v, sheet));
+    Val::Num(n(a) + (n(b) - n(a)) * t)
+}
+
 /// What a comparison or arithmetic operator gives on two numbers (a division by 0 is 0). The
 /// logical and equality operators are their evaluators' own: false here.
 fn arith(op: Op, a: f32, b: f32) -> Val {
@@ -1446,8 +1463,6 @@ struct Eval<'a> {
     now: f64,
     site: u64,
     tweening: bool,
-    /// `unit.*` while a `u-*` expression is evaluated for one unit.
-    unit: Option<units::UnitVars>,
 }
 
 impl Eval<'_> {
@@ -1475,9 +1490,6 @@ impl Eval<'_> {
             "window.fullscreen" => return Val::Bool(self.win.fullscreen),
             "window.maximized" => return Val::Bool(self.win.maximized),
             _ => {}
-        }
-        if let (Some(u), Some(f)) = (&self.unit, n.strip_prefix("unit.")) {
-            return Val::Num(u.get(f).unwrap_or(0.0));
         }
         if let Some(v) = self.lets.get(n) {
             return v.clone();
@@ -1538,13 +1550,7 @@ impl Eval<'_> {
                 }
                 Op::Eq | Op::Ne => {
                     let (a, b) = (self.eval(a), self.eval(b));
-                    let eq = match (&a, &b) {
-                        (Val::Num(_) | Val::Bool(_), _) | (_, Val::Num(_) | Val::Bool(_)) => {
-                            num(&a, self.sheet) == num(&b, self.sheet)
-                        }
-                        _ => a == b,
-                    };
-                    Val::Bool(eq == (*op == Op::Eq))
+                    Val::Bool(equal(self.sheet, &a, &b) == (*op == Op::Eq))
                 }
                 _ => {
                     let (a, b) = (self.n(a), self.n(b));
@@ -1556,23 +1562,11 @@ impl Eval<'_> {
     }
 
     fn call(&mut self, f: &str, args: &[Ex], site: u32) -> Val {
-        if f == "tween" && self.unit.is_some() {
-            // Per unit there is no state to ease from: a unit's look is a function of time.
-            return Val::Num(args.first().map_or(0.0, |a| self.n(a)));
-        }
         if f == "mix" {
             // mix(a, b, t): colours or numbers.
             let (a, b) = (args.first().map(|a| self.eval(a)), args.get(1).map(|b| self.eval(b)));
-            let t = args.get(2).map_or(0.0, |t| self.n(t)).clamp(0.0, 1.0);
-            let (ca, cb) = (
-                a.as_ref().and_then(|a| resolve_color(self.sheet, a)),
-                b.as_ref().and_then(|b| resolve_color(self.sheet, b)),
-            );
-            if let (Some(ca), Some(cb), false) = (ca, cb, matches!(a, Some(Val::Num(_)))) {
-                return Val::Color(std::array::from_fn(|i| ca[i] + (cb[i] - ca[i]) * t));
-            }
-            let (a, b) = (a.map_or(0.0, |a| num(&a, self.sheet)), b.map_or(0.0, |b| num(&b, self.sheet)));
-            return Val::Num(a + (b - a) * t);
+            let t = args.get(2).map_or(0.0, |t| self.n(t));
+            return mix(self.sheet, a.as_ref(), b.as_ref(), t);
         }
         if f == "tween" {
             // tween(value, across, duration): the value, eased from where it was over
@@ -1618,29 +1612,78 @@ impl Eval<'_> {
             return Val::Num(t.out);
         }
         let v: Vec<f32> = args.iter().map(|a| self.n(a)).collect();
-        let a = |i: usize| v.get(i).copied().unwrap_or(0.0);
-        Val::Num(match f {
-            "min" => v.iter().copied().fold(f32::INFINITY, f32::min),
-            "max" => v.iter().copied().fold(f32::NEG_INFINITY, f32::max),
-            "clamp" => a(0).max(a(1)).min(a(2).max(a(1))),
-            "pow" => a(0).max(0.0).powf(a(1)),
-            "exp" => a(0).exp(),
-            "ln" => a(0).max(1e-30).ln(),
-            "sqrt" => a(0).max(0.0).sqrt(),
-            "abs" => a(0).abs(),
-            "floor" => a(0).floor(),
-            "ceil" => a(0).ceil(),
-            "round" => a(0).round(),
-            "lerp" => a(0) + (a(1) - a(0)) * a(2),
-            "smoothstep" => smoothstep(a(0).clamp(0.0, 1.0)),
-            "smoothstep5" => smootherstep(a(0)),
+        Val::Num(Math::parse(f).run(v.len(), |i| v.get(i).copied().unwrap_or(0.0)))
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Math {
+    Min,
+    Max,
+    Clamp,
+    Pow,
+    Exp,
+    Ln,
+    Sqrt,
+    Abs,
+    Floor,
+    Ceil,
+    Round,
+    Lerp,
+    Smoothstep,
+    Smoothstep5,
+    Keys,
+    Sin,
+    Cos,
+    Spring,
+    Unknown,
+}
+impl Math {
+    fn parse(name: &str) -> Self {
+        match name {
+            "min" => Self::Min,
+            "max" => Self::Max,
+            "clamp" => Self::Clamp,
+            "pow" => Self::Pow,
+            "exp" => Self::Exp,
+            "ln" => Self::Ln,
+            "sqrt" => Self::Sqrt,
+            "abs" => Self::Abs,
+            "floor" => Self::Floor,
+            "ceil" => Self::Ceil,
+            "round" => Self::Round,
+            "lerp" => Self::Lerp,
+            "smoothstep" => Self::Smoothstep,
+            "smoothstep5" => Self::Smoothstep5,
+            "keys" => Self::Keys,
+            "sin" => Self::Sin,
+            "cos" => Self::Cos,
+            "spring" => Self::Spring,
+            _ => Self::Unknown,
+        }
+    }
+    fn run(self, len: usize, a: impl Fn(usize) -> f32) -> f32 {
+        match self {
+            Self::Min => (0..len).map(&a).fold(f32::INFINITY, f32::min),
+            Self::Max => (0..len).map(&a).fold(f32::NEG_INFINITY, f32::max),
+            Self::Clamp => a(0).max(a(1)).min(a(2).max(a(1))),
+            Self::Pow => a(0).max(0.0).powf(a(1)),
+            Self::Exp => a(0).exp(),
+            Self::Ln => a(0).max(1e-30).ln(),
+            Self::Sqrt => a(0).max(0.0).sqrt(),
+            Self::Abs => a(0).abs(),
+            Self::Floor => a(0).floor(),
+            Self::Ceil => a(0).ceil(),
+            Self::Round => a(0).round(),
+            Self::Lerp => a(0) + (a(1) - a(0)) * a(2),
+            Self::Smoothstep => smoothstep(a(0).clamp(0.0, 1.0)),
+            Self::Smoothstep5 => smootherstep(a(0)),
             // keys(x, at0, v0, at1, v1, …): keyframes on x (stops in order): the first value
             // before the first stop, the last after the last, eased (smoothstep) between.
-            "keys" => {
-                let stops = &v[1.min(v.len())..];
-                let pairs = stops.len() / 2;
+            Self::Keys => {
+                let pairs = len.saturating_sub(1) / 2;
                 let x = a(0);
-                let stop = |i: usize| (stops[2 * i], stops[2 * i + 1]);
+                let stop = |i: usize| (a(2 * i + 1), a(2 * i + 2));
                 if pairs == 0 {
                     0.0
                 } else if x <= stop(0).0 {
@@ -1657,11 +1700,11 @@ impl Eval<'_> {
                     }
                 }
             }
-            "sin" => a(0).sin(),
-            "cos" => a(0).cos(),
+            Self::Sin => a(0).sin(),
+            Self::Cos => a(0).cos(),
             // spring(t, frequency, damping): a damped spring's step from 0 to 1 at time t (0
             // before 0): damping 1 settles without overshoot, less overshoots and rings.
-            "spring" => {
+            Self::Spring => {
                 let (t, f, z) = (a(0), a(1).max(0.0), a(2).clamp(0.0, 1.0));
                 if t <= 0.0 {
                     0.0
@@ -1676,8 +1719,8 @@ impl Eval<'_> {
                     }
                 }
             }
-            _ => 0.0,
-        })
+            Self::Unknown => 0.0,
+        }
     }
 }
 
@@ -1775,8 +1818,8 @@ impl Doc {
     }
 
     /// An evaluator over the doc's state: its sheet, lets, bindings, tweens, window and clock;
-    /// `site` keys its tweens, `unit` is one text unit's `unit.*`.
-    fn evaluator(&mut self, site: u64, unit: Option<units::UnitVars>) -> Eval<'_> {
+    /// `site` keys its tweens.
+    fn evaluator(&mut self, site: u64) -> Eval<'_> {
         Eval {
             sheet: &self.sheet,
             lets: &self.lets,
@@ -1786,12 +1829,11 @@ impl Doc {
             now: self.now,
             site,
             tweening: false,
-            unit,
         }
     }
 
     fn eval_val(&mut self, v: &Val, site: u64) -> Val {
-        let mut ev = self.evaluator(site, None);
+        let mut ev = self.evaluator(site);
         let out = ev.val(v);
         let tweening = ev.tweening;
         self.tweening |= tweening;
@@ -1799,7 +1841,7 @@ impl Doc {
     }
 
     fn eval_ex(&mut self, e: &Ex, site: u64) -> Val {
-        let mut ev = self.evaluator(site, None);
+        let mut ev = self.evaluator(site);
         let out = ev.eval(e);
         let tweening = ev.tweening;
         self.tweening |= tweening;
