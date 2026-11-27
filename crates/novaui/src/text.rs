@@ -937,11 +937,10 @@ fn pick_cluster(
     picks: &mut HashMap<(char, u16), Pick>,
     system_chain: &mut bool,
     g: &str,
+    c: char,
     weight: u16,
 ) -> Pick {
-    let mut cs = g.chars();
-    let Some(c) = cs.next() else { return primary_pick(families, weight) };
-    let single = cs.next().is_none();
+    let single = c.len_utf8() == g.len();
     if single {
         if let Some(&hit) = picks.get(&(c, weight)) {
             return hit;
@@ -1326,8 +1325,8 @@ impl Text {
         if let Some(sh) = self.shaped.get(weight, t) {
             return sh;
         }
-        let pick = &mut |families: &mut Vec<Family>, g: &str| {
-            pick_cluster(families, &mut self.picks, &mut self.system_chain, g, weight)
+        let pick = &mut |families: &mut Vec<Family>, g: &str, first| {
+            pick_cluster(families, &mut self.picks, &mut self.system_chain, g, first, weight)
         };
         let sh = Rc::new(self.shaper.shape(&mut self.families, t, pick));
         self.shaped.insert(weight, t.to_owned(), sh.clone());

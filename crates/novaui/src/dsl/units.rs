@@ -91,7 +91,8 @@ impl Program {
             Ex::Bind(n) => return self.read(n, true),
             Ex::Name(n) => {
                 if let Some(f) = n.strip_prefix("unit.") {
-                    Instr::Field(FIELDS.iter().position(|x| *x == f).unwrap_or(FIELDS.len()))
+                    let Some(i) = FIELDS.iter().position(|x| *x == f) else { return self.slot(Val::Num(0.0)) };
+                    Instr::Field(i)
                 } else if matches!(n.as_str(), "window.w" | "window.h" | "window.fullscreen" | "window.maximized")
                     || doc.lets.contains_key(n)
                     || doc.sheet.decls.iter().any(|d| match d {
@@ -157,12 +158,12 @@ impl Program {
             }
         }
     }
-    fn run(&mut self, sheet: &Sheet, fields: &[f32; 10]) {
+    fn run(&mut self, sheet: &Sheet, fields: &[f32; FIELDS.len()]) {
         for (i, op) in &self.code {
             let value = |r: usize| &self.values[self.which[r]];
             let number = |r| num(value(r), sheet);
             let out = match op {
-                Instr::Field(f) => Val::Num(fields.get(*f).copied().unwrap_or(0.0)),
+                Instr::Field(f) => Val::Num(fields[*f]),
                 Instr::Neg(a) => Val::Num(-number(*a)),
                 Instr::Number(a) => Val::Num(number(*a)),
                 Instr::Not(a) => Val::Bool(!truth(value(*a))),

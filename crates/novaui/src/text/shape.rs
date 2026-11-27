@@ -136,7 +136,7 @@ impl Shaper {
         &mut self,
         families: &mut Vec<Family>,
         t: &str,
-        pick: &mut dyn FnMut(&mut Vec<Family>, &str) -> Pick,
+        pick: &mut dyn FnMut(&mut Vec<Family>, &str, char) -> Pick,
     ) -> Shaped {
         let (levels, paras) = bidi(t);
         let level_at = |b: usize| levels.get(b).copied().unwrap_or(0);
@@ -144,9 +144,9 @@ impl Shaper {
         // script (spaces, digits, punctuation) takes the script before it, else the one after.
         let mut gs: Vec<(u32, u32, Pick, Option<Script>, u8)> = Vec::new();
         for (b, g) in t.grapheme_indices(true) {
-            let c = g.chars().next().unwrap_or(' ');
+            let c = g.chars().next().expect("graphemes are nonempty");
             if !hard_break(c) {
-                gs.push((b as u32, (b + g.len()) as u32, pick(families, g), script_of(c), level_at(b)));
+                gs.push((b as u32, (b + g.len()) as u32, pick(families, g, c), script_of(c), level_at(b)));
             }
         }
         let mut last = None;
