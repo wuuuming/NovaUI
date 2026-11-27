@@ -879,8 +879,8 @@ pub struct Text {
     ink_glyphs: HashMap<(u8, u8, u16), f32>,
     /// The face each (char, weight) falls back to (`pick_cluster`).
     picks: HashMap<(char, u16), Pick>,
-    /// None while the bundled families have covered everything requested.
-    scanned: Option<&'static [crate::font_scan::ScannedFace]>,
+    /// Whether the named system families have joined the fallback chain.
+    system_chain: bool,
     pages: [Page; PAGES],
     /// The page being filled.
     cur: usize,
@@ -935,7 +935,7 @@ fn primary_pick(families: &[Family], weight: u16) -> Pick {
 fn pick_cluster(
     families: &mut Vec<Family>,
     picks: &mut HashMap<(char, u16), Pick>,
-    scanned: &mut Option<&[crate::font_scan::ScannedFace]>,
+    system_chain: &mut bool,
     g: &str,
     weight: u16,
 ) -> Pick {
@@ -951,17 +951,16 @@ fn pick_cluster(
     let all = |fam: &Family| g.chars().all(|c| shape::ignorable(c) || has(fam, c));
     let mut found = families.iter().position(all);
     if found.is_none() {
-        if scanned.is_none() {
+        if !*system_chain {
             // Preserve the system fallback order, but don't pay for it until the bundle misses.
-            *scanned = Some(crate::font_scan::scanned());
+            *system_chain = true;
             let start = families.len();
             families.extend(MORE.iter().map(|n| scanned_family(n)).filter(|f| !f.faces.is_empty()));
             found = families[start..].iter().position(all).map(|i| start + i);
         }
         if found.is_none() && families.len() <= u8::MAX as usize {
             let mask = crate::font_scan::range_mask(c);
-            let mut candidates: Vec<_> = scanned
-                .unwrap_or_default()
+            let mut candidates: Vec<_> = crate::font_scan::scanned()
                 .iter()
                 .filter(|f| mask == 0 || f.ranges == 0 || f.ranges & mask != 0)
                 .collect();
@@ -1134,12 +1133,12 @@ const MORE: &[&str] = &[
 
 /// The chain: the bundled Noto when it is there, else the system's Latin and CJK families; then
 /// the system's others for what those lack. Empty when no font at all loads.
-fn families() -> (Vec<Family>, Option<&'static [crate::font_scan::ScannedFace]>) {
+fn families() -> (Vec<Family>, bool) {
     let first =
         |names: &[&'static str]| names.iter().map(|&n| (n, scanned_family(n))).find(|(_, f)| !f.faces.is_empty());
     let mut chain = bundled_families();
     if !chain.is_empty() {
-        return (chain, None);
+        return (chain, false);
     }
     let mut used = Vec::new();
     for (name, f) in first(LATIN).into_iter().chain(first(CJK)) {
@@ -1152,13 +1151,7 @@ fn families() -> (Vec<Family>, Option<&'static [crate::font_scan::ScannedFace]>)
             chain.push(f);
         }
     }
-    let catalog = crate::font_scan::scanned();
-    if chain.is_empty() {
-        if let Some(f) = catalog.iter().find_map(|f| load(&f.path.to_string_lossy(), f.index, None, f.weight)) {
-            chain.push(Family { faces: vec![f] });
-        }
-    }
-    (chain, Some(catalog))
+    (chain, true)
 }
 
 /// Whether any font loads (`platform::run` reports none as an error before a `Tree` exists).
@@ -1187,11 +1180,11 @@ impl Text {
     ///
     /// When no font loads at all; `platform::run` reports that as an `Error` before it makes one.
     pub fn new() -> Self {
-        let (families, scanned) = families();
+        let (families, system_chain) = families();
         assert!(!families.is_empty(), "no usable font");
         Text {
             families,
-            scanned,
+            system_chain,
             font: None,
             atlas: vec![0; (ATLAS * ATLAS) as usize],
             slots: HashMap::default(),
@@ -1241,8 +1234,8 @@ impl Text {
                 Some(fam)
             }
         };
-        let (mut families, scanned) = families();
-        self.scanned = scanned;
+        let (mut families, system_chain) = families();
+        self.system_chain = system_chain;
         families.splice(0..0, first);
         self.families = families;
         self.font = family.map(str::to_owned);
@@ -1334,7 +1327,7 @@ impl Text {
             return sh;
         }
         let pick = &mut |families: &mut Vec<Family>, g: &str| {
-            pick_cluster(families, &mut self.picks, &mut self.scanned, g, weight)
+            pick_cluster(families, &mut self.picks, &mut self.system_chain, g, weight)
         };
         let sh = Rc::new(self.shaper.shape(&mut self.families, t, pick));
         self.shaped.insert(weight, t.to_owned(), sh.clone());
