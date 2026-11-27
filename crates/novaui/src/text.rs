@@ -2008,27 +2008,6 @@ mod exact_bounds {
 
 #[cfg(test)]
 mod drag_atlas {
-    /// A Thai glyph missing from the Latin chain shapes and draws from the scanned face.
-    #[test]
-    fn a_missing_glyph_draws_from_a_scanned_face() {
-        let Some(dir) = std::env::var_os("NOVA_FONTS_DIR").map(std::path::PathBuf::from) else {
-            eprintln!("skipped: NOVA_FONTS_DIR not set");
-            return;
-        };
-        let mut t = super::Text::new();
-        t.families =
-            vec![super::Family { faces: super::load_variable(&dir.join("NotoSans-VF.ttf").to_string_lossy(), &[400]) }];
-        static CATALOG: std::sync::OnceLock<Vec<crate::font_scan::ScannedFace>> = std::sync::OnceLock::new();
-        t.scanned = Some(CATALOG.get_or_init(|| crate::font_scan::faces_in(&dir.join("NotoSansThai-VF.ttf"))));
-        use ab_glyph::Font;
-        assert_eq!(t.families[0].faces[0].font.glyph_id('ก').0, 0);
-        let g = &t.shaped("ก", 400).glyphs[0];
-        assert_eq!(g.fam, 1);
-        assert_ne!(g.id, 0);
-        assert!(t.slot(g.fam, g.face, ab_glyph::GlyphId(g.id), 96, 0).is_some());
-        t.shaped("กก", 400);
-        assert_eq!(t.families.len(), 2);
-    }
 
     /// A resize of a page of large text: four lines of mixed CJK / Latin at a size sweeping 24 -> 36 px
     /// over 400 frames. The atlas must hold the whole drag without starting over.

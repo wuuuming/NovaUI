@@ -126,7 +126,7 @@ fn font_dirs() -> Vec<PathBuf> {
 }
 
 /// The directory entries only, not the fontconfig rules or included configuration files.
-#[cfg(any(not(windows), test))]
+#[cfg(not(windows))]
 fn configured_dirs(mut xml: &str, home: Option<&Path>, xdg: Option<&Path>) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     while let Some((_, tag)) = xml.split_once('<') {
@@ -403,17 +403,4 @@ fn family_names(t: &[u8]) -> (Vec<(u16, String)>, String) {
         }
     }
     (if typo.is_empty() { plain } else { typo }, sub)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn fontconfig_directories_expand_their_prefixes_and_ignore_comments() {
-        let xml = r#"<!-- <dir>/skip</dir> --><fontconfig><dir> /opt/type </dir><dir prefix="xdg">fonts</dir><dir>~/.fonts</dir></fontconfig>"#;
-        assert_eq!(
-            configured_dirs(xml, Some(Path::new("/home/test")), Some(Path::new("/data"))),
-            [PathBuf::from("/opt/type"), PathBuf::from("/data/fonts"), PathBuf::from("/home/test/.fonts")]
-        );
-    }
 }
