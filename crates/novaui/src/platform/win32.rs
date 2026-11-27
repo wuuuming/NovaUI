@@ -761,9 +761,12 @@ fn make_backend(
         }
     }
     if kind != super::BackendKind::Software {
-        if let Ok(mut d) = crate::render::d3d11::D3d11::new(w, h) {
-            if d.attach(hwnd, w, h).is_ok() {
-                return Box::new(d);
+        use crate::render::d3d11::D3d11;
+        for create in [D3d11::new, D3d11::warp] {
+            if let Ok(mut d) = create(w, h) {
+                if d.attach(hwnd, w, h).is_ok() {
+                    return Box::new(d);
+                }
             }
         }
     }

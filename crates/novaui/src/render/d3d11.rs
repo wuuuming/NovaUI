@@ -356,6 +356,16 @@ pub fn warm() {
 
 impl D3d11 {
     pub fn new(w: i32, h: i32) -> windows::core::Result<Self> {
+        Self::with_driver(w, h, D3D_DRIVER_TYPE_HARDWARE)
+    }
+
+    pub(crate) fn warp(w: i32, h: i32) -> windows::core::Result<Self> {
+        let backend = Self::with_driver(w, h, D3D_DRIVER_TYPE_WARP)?;
+        eprintln!("novaui: D3D11 WARP: {}", backend.adapter);
+        Ok(backend)
+    }
+
+    fn with_driver(w: i32, h: i32, driver: D3D_DRIVER_TYPE) -> windows::core::Result<Self> {
         // SAFETY: device and resource creation on this thread; every description passed is a
         // live local (the semantic name a static C string), every out-parameter a local `Option`
         // read through `made`.
@@ -364,7 +374,7 @@ impl D3d11 {
             let mut ctx = None;
             D3D11CreateDevice(
                 None,
-                D3D_DRIVER_TYPE_HARDWARE,
+                driver,
                 None,
                 // The driver submits on this thread rather than its own worker: a UI's few draws
                 // a frame cost more in the hand-off (a wake of the driver's thread per present)

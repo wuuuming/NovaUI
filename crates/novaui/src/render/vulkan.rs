@@ -276,13 +276,29 @@ fn entry() -> Result<&'static ash::Entry, String> {
         .map_err(|e| e.clone())
 }
 
-pub struct Vulkan {
-    _entry: &'static ash::Entry,
+/// The surface and instance outlive every device tried on them.
+struct Display {
     inst: ash::Instance,
+    surface: Option<(ash::khr::surface::Instance, vk::SurfaceKHR)>,
+}
+
+impl Drop for Display {
+    fn drop(&mut self) {
+        // SAFETY: all devices and swap chains are gone before their last display reference.
+        unsafe {
+            if let Some((api, surface)) = &self.surface {
+                api.destroy_surface(*surface, None);
+            }
+            self.inst.destroy_instance(None);
+        }
+    }
+}
+
+pub struct Vulkan {
+    _display: std::rc::Rc<Display>,
     pdev: vk::PhysicalDevice,
     dev: ash::Device,
     mem_props: vk::PhysicalDeviceMemoryProperties,
-    qf: u32,
     queue: vk::Queue,
     pool: vk::CommandPool,
     cmd: vk::CommandBuffer,
@@ -319,11 +335,10 @@ pub struct Vulkan {
     insts: Vec<Inst>,
     batches: Vec<Batch>,
     wsi: Option<Wsi>,
-    has_surface_ext: bool,
     adapter: String,
     lost: bool,
     /// The window shows what is under it where the canvas is transparent (an overlay): the swap
-    /// chain composes premultiplied alpha (`set_transparent`).
+    /// chain composes premultiplied alpha.
     transparent: bool,
 }
 
@@ -366,14 +381,19 @@ fn rect2d(r: Rect) -> vk::Rect2D {
 }
 
 impl Vulkan {
-    /// Headless device (offscreen canvas). `attach` adds a window later.
+    /// Headless device (offscreen canvas).
     pub fn new(w: i32, h: i32) -> Result<Self, String> {
         // SAFETY: creation has no precondition beyond the module contract; it starts from the
         // loader alone.
-        unsafe { Self::create(w, h) }
+        unsafe { Self::create(w, h, None, false) }
     }
 
-    unsafe fn create(w: i32, h: i32) -> Result<Self, String> {
+    pub(crate) fn window(window: Window, w: i32, h: i32, transparent: bool) -> Result<Self, String> {
+        // SAFETY: the host keeps both handles alive until it drops the backend.
+        unsafe { Self::create(w, h, Some(window), transparent) }
+    }
+
+    unsafe fn create(w: i32, h: i32, window: Option<Window>, transparent: bool) -> Result<Self, String> {
         let entry = entry()?;
         let available: Vec<String> = entry
             .enumerate_instance_extension_properties(None)
@@ -406,26 +426,104 @@ impl Vulkan {
                 None,
             )
             .map_err(|e| format!("vkCreateInstance: {e}"))?;
-        // A discrete GPU first, then integrated, then anything (llvmpipe).
-        let pdevs = inst.enumerate_physical_devices().map_err(|e| format!("{e}"))?;
-        let rank = |p: vk::PhysicalDevice| match inst.get_physical_device_properties(p).device_type {
-            vk::PhysicalDeviceType::DISCRETE_GPU => 3,
-            vk::PhysicalDeviceType::INTEGRATED_GPU => 2,
-            vk::PhysicalDeviceType::VIRTUAL_GPU => 1,
-            _ => 0,
-        };
-        let pdev = *pdevs.iter().max_by_key(|&&p| rank(p)).ok_or("no Vulkan device")?;
-        let props = inst.get_physical_device_properties(pdev);
-        let adapter = props.device_name_as_c_str().map(|c| c.to_string_lossy().into_owned()).unwrap_or_default();
-        let qf = inst
-            .get_physical_device_queue_family_properties(pdev)
-            .iter()
-            .position(|q| q.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-            .ok_or("no graphics queue")? as u32;
+        let mut ctx = Display { inst, surface: None };
+        if let Some(window) = window {
+            let ext = match &window {
+                #[cfg(target_os = "linux")]
+                Window::Xlib { .. } => ash::khr::xlib_surface::NAME,
+                #[cfg(target_os = "linux")]
+                Window::Wayland { .. } => ash::khr::wayland_surface::NAME,
+                #[cfg(windows)]
+                Window::Win32 { .. } => ash::khr::win32_surface::NAME,
+            };
+            if !has_surface_ext || !want(ext) {
+                return Err("Vulkan window surface extension unavailable".into());
+            }
+            let surface = match window {
+                #[cfg(target_os = "linux")]
+                Window::Xlib { display, window } => {
+                    let ci = vk::XlibSurfaceCreateInfoKHR::default().dpy(display as _).window(window as _);
+                    ash::khr::xlib_surface::Instance::new(entry, &ctx.inst)
+                        .create_xlib_surface(&ci, None)
+                        .map_err(|e| format!("xlib surface: {e}"))?
+                }
+                #[cfg(target_os = "linux")]
+                Window::Wayland { display, surface } => {
+                    let ci = vk::WaylandSurfaceCreateInfoKHR::default().display(display as _).surface(surface as _);
+                    ash::khr::wayland_surface::Instance::new(entry, &ctx.inst)
+                        .create_wayland_surface(&ci, None)
+                        .map_err(|e| format!("wayland surface: {e}"))?
+                }
+                #[cfg(windows)]
+                Window::Win32 { hinstance, hwnd } => {
+                    let ci = vk::Win32SurfaceCreateInfoKHR::default().hinstance(hinstance).hwnd(hwnd);
+                    ash::khr::win32_surface::Instance::new(entry, &ctx.inst)
+                        .create_win32_surface(&ci, None)
+                        .map_err(|e| format!("win32 surface: {e}"))?
+                }
+            };
+            ctx.surface = Some((ash::khr::surface::Instance::new(entry, &ctx.inst), surface));
+        }
+        let ctx = std::rc::Rc::new(ctx);
+        let inst = &ctx.inst;
+        let pick = std::env::var("NOVAUI_VULKAN_DEVICE").unwrap_or_default().to_lowercase();
+        let mut candidates = Vec::new();
+        for (i, p) in inst.enumerate_physical_devices().map_err(|e| e.to_string())?.into_iter().enumerate() {
+            let props = inst.get_physical_device_properties(p);
+            let name = props.device_name_as_c_str().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            if !pick.is_empty()
+                && !pick.parse::<usize>().map_or_else(|_| name.to_lowercase().contains(&pick), |n| n == i)
+            {
+                continue;
+            }
+            let family = inst.get_physical_device_queue_family_properties(p).iter().enumerate().find_map(|(i, q)| {
+                (q.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+                    && ctx.surface.as_ref().is_none_or(|(api, s)| {
+                        api.get_physical_device_surface_support(p, i as u32, *s).unwrap_or(false)
+                    }))
+                .then_some(i as u32)
+            });
+            if let Some(qf) = family {
+                let rank = match props.device_type {
+                    vk::PhysicalDeviceType::INTEGRATED_GPU => 0,
+                    vk::PhysicalDeviceType::DISCRETE_GPU => 1,
+                    _ => 2,
+                };
+                candidates.push((rank, p, qf, name));
+            }
+        }
+        candidates.sort_by_key(|c| c.0);
+        let mut error = "no suitable Vulkan graphics queue".to_string();
+        for (_, pdev, qf, adapter) in candidates {
+            match Self::device(&ctx, pdev, qf, &adapter, (w, h), transparent) {
+                Ok(v) => {
+                    if ctx.surface.is_some() {
+                        eprintln!("novaui: Vulkan: {adapter}");
+                    }
+                    return Ok(v);
+                }
+                Err(e) => {
+                    error = format!("{adapter}: {e}");
+                    eprintln!("novaui: {error}");
+                }
+            }
+        }
+        Err(error)
+    }
+
+    unsafe fn device(
+        ctx: &std::rc::Rc<Display>,
+        pdev: vk::PhysicalDevice,
+        qf: u32,
+        adapter: &str,
+        (w, h): (i32, i32),
+        transparent: bool,
+    ) -> Result<Self, String> {
+        let inst = &ctx.inst;
         let prio = [1.0];
         let qci = [vk::DeviceQueueCreateInfo::default().queue_family_index(qf).queue_priorities(&prio)];
         let dexts = [ash::khr::swapchain::NAME.as_ptr()];
-        let dexts: &[*const std::ffi::c_char] = if has_surface_ext { &dexts } else { &[] };
+        let dexts: &[*const std::ffi::c_char] = if ctx.surface.is_some() { &dexts } else { &[] };
         let dev = inst
             .create_device(
                 pdev,
@@ -513,12 +611,10 @@ impl Vulkan {
             h: 0,
         };
         let mut v = Vulkan {
-            _entry: entry,
-            inst,
+            _display: ctx.clone(),
             pdev,
             dev,
             mem_props,
-            qf,
             queue,
             pool,
             cmd,
@@ -552,10 +648,9 @@ impl Vulkan {
             insts: Vec::new(),
             batches: Vec::new(),
             wsi: None,
-            has_surface_ext,
-            adapter,
+            adapter: adapter.to_owned(),
             lost: false,
-            transparent: false,
+            transparent,
         };
         v.ubo = v.buffer(UBO_SLOT * UBO_SLOTS, vk::BufferUsageFlags::UNIFORM_BUFFER)?;
         v.insts_buf = v.buffer(INST_SIZE * 16384, vk::BufferUsageFlags::VERTEX_BUFFER)?;
@@ -563,6 +658,28 @@ impl Vulkan {
         v.atlas = v.image(crate::text::ATLAS, crate::text::ATLAS, vk::Format::R8_UNORM, false)?;
         v.dummy = v.image(1, 1, FMT, false)?;
         v.canvas = v.image(bucket(w), bucket(h), FMT, true)?;
+        if let Some((api, surface)) = &ctx.surface {
+            let acquire =
+                v.dev.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).map_err(|e| e.to_string())?;
+            v.wsi = Some(Wsi {
+                surface_i: api.clone(),
+                surface: *surface,
+                sc_d: ash::khr::swapchain::Device::new(inst, &v.dev),
+                sc: vk::SwapchainKHR::null(),
+                images: Vec::new(),
+                pending: Vec::new(),
+                acquire,
+                done: Vec::new(),
+                format: vk::Format::B8G8R8A8_UNORM,
+                extent: (0, 0),
+                stale: true,
+                alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+            });
+            v.make_swapchain(w, h)?;
+            if transparent && v.wsi.as_ref().is_some_and(|ws| ws.alpha == vk::CompositeAlphaFlagsKHR::OPAQUE) {
+                return Err("surface composes no alpha".into());
+            }
+        }
         Ok(v)
     }
 
@@ -661,79 +778,6 @@ impl Vulkan {
         }
         dev.destroy_shader_module(vs, None);
         Ok(out)
-    }
-
-    /// The swap chain made by `attach` composes the canvas's premultiplied alpha (an overlay):
-    /// `PRE_MULTIPLIED` where the surface offers it, else `INHERIT` (the window's visual says,
-    /// an ARGB one on X11). Set before `attach`.
-    pub fn set_transparent(&mut self, on: bool) {
-        self.transparent = on;
-    }
-
-    /// Whether the swap chain composes alpha (`set_transparent` and a surface that offers it).
-    pub fn composes_alpha(&self) -> bool {
-        self.wsi.as_ref().is_some_and(|w| w.alpha != vk::CompositeAlphaFlagsKHR::OPAQUE)
-    }
-
-    /// Window mode: a FIFO swap chain on the given surface.
-    pub fn attach(&mut self, window: Window, w: i32, h: i32) -> Result<(), String> {
-        if !self.has_surface_ext {
-            return Err("VK_KHR_surface unavailable".into());
-        }
-        // SAFETY: the module contract; the window handles are the host's, alive while this
-        // backend is attached to them (the host drops the backend before its window).
-        unsafe {
-            let surface = match window {
-                #[cfg(target_os = "linux")]
-                Window::Xlib { display, window } => {
-                    let ci = vk::XlibSurfaceCreateInfoKHR::default().dpy(display as _).window(window as _);
-                    ash::khr::xlib_surface::Instance::new(self._entry, &self.inst)
-                        .create_xlib_surface(&ci, None)
-                        .map_err(|e| format!("xlib surface: {e}"))?
-                }
-                #[cfg(target_os = "linux")]
-                Window::Wayland { display, surface } => {
-                    let ci = vk::WaylandSurfaceCreateInfoKHR::default().display(display as _).surface(surface as _);
-                    ash::khr::wayland_surface::Instance::new(self._entry, &self.inst)
-                        .create_wayland_surface(&ci, None)
-                        .map_err(|e| format!("wayland surface: {e}"))?
-                }
-                #[cfg(windows)]
-                Window::Win32 { hinstance, hwnd } => {
-                    let ci = vk::Win32SurfaceCreateInfoKHR::default().hinstance(hinstance).hwnd(hwnd);
-                    ash::khr::win32_surface::Instance::new(self._entry, &self.inst)
-                        .create_win32_surface(&ci, None)
-                        .map_err(|e| format!("win32 surface: {e}"))?
-                }
-            };
-            let surface_i = ash::khr::surface::Instance::new(self._entry, &self.inst);
-            if !surface_i.get_physical_device_surface_support(self.pdev, self.qf, surface).unwrap_or(false) {
-                surface_i.destroy_surface(surface, None);
-                return Err("graphics queue cannot present to this surface".into());
-            }
-            let acquire = match self.dev.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) {
-                Ok(s) => s,
-                Err(e) => {
-                    surface_i.destroy_surface(surface, None);
-                    return Err(format!("semaphore: {e}"));
-                }
-            };
-            self.wsi = Some(Wsi {
-                surface_i,
-                surface,
-                sc_d: ash::khr::swapchain::Device::new(&self.inst, &self.dev),
-                sc: vk::SwapchainKHR::null(),
-                images: Vec::new(),
-                pending: Vec::new(),
-                acquire,
-                done: Vec::new(),
-                format: vk::Format::B8G8R8A8_UNORM,
-                extent: (0, 0),
-                stale: true,
-                alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
-            });
-            self.make_swapchain(w, h)
-        }
     }
 
     unsafe fn make_swapchain(&mut self, w: i32, h: i32) -> Result<(), String> {
@@ -1725,12 +1769,8 @@ impl Drop for Vulkan {
                 for s in ws.done {
                     self.dev.destroy_semaphore(s, None);
                 }
-                self.dev.destroy_device(None);
-                ws.surface_i.destroy_surface(ws.surface, None);
-            } else {
-                self.dev.destroy_device(None);
             }
-            self.inst.destroy_instance(None);
+            self.dev.destroy_device(None);
         }
     }
 }

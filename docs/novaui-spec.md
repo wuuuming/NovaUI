@@ -513,7 +513,13 @@ screenshot interface, so its rendering was not captured. Windows 10 is not verif
 |---|---|---|---|
 | Win32 | Windows | IMM32: inline preedit, candidate window at the caret (§6a) | DWM (§6d) |
 | Wayland (`platform/wayland.rs`) | a Wayland session; `NOVAUI_X11=1` forces X11 | `zwp_text_input_v3`: inline preedit, candidates at the caret (§6a) | client-side; `org_kde_kwin_shadow` on KWin |
-| X11 (`platform/x11.rs`) | otherwise, or when Wayland cannot give a window (no xdg-shell, no Vulkan surface) | XIM (`platform/xim.rs`): over-the-spot at the caret, else on-the-spot (§6a) | `_KDE_NET_WM_SHADOW` on KWin |
+| X11 (`platform/x11.rs`) | otherwise, or when Wayland cannot give a window (for example, no xdg-shell) | XIM (`platform/xim.rs`): over-the-spot at the caret, else on-the-spot (§6a) | `_KDE_NET_WM_SHADOW` on KWin |
+
+Linux window renderers try Vulkan graphics queues that can present to the window's surface:
+integrated first, then discrete, then other devices. `NOVAUI_VULKAN_DEVICE` restricts the choice
+to a zero-based enumeration index or a case-insensitive device-name substring. Without a usable
+GPU, software presents through `wl_shm` on Wayland or an XImage on X11. Windows tries D3D11
+hardware, then D3D11 WARP, then the software canvas.
 
 Wayland: an xdg-shell toplevel without server decorations; moving and resizing are the
 compositor's (`xdg_toplevel.move` / `.resize`); fractional scale from `wp_fractional_scale_v1`

@@ -1104,39 +1104,54 @@ fn kde_shadow(st: &State, qh: &QueueHandle<State>, win: &mut Win) {
     win.shadow_scale = win.scale120;
 }
 
+/// Each committed buffer owns its storage; the server may finish reading it after commit.
+pub(crate) struct Presenter {
+    shm: wl_shm::WlShm,
+    surface: wl_surface::WlSurface,
+    qh: QueueHandle<State>,
+}
+
+impl Presenter {
+    pub(crate) fn present(&self, canvas: &crate::render::software::Surface, damage: &[crate::geom::Rect]) {
+        // SAFETY: the canvas owns these initialized u32 pixels (premultiplied ARGB8888) and
+        // shm_buffer copies their bytes before this borrow ends.
+        let bytes = unsafe { std::slice::from_raw_parts(canvas.px.as_ptr().cast(), canvas.px.len() * 4) };
+        if let Some(buffer) = shm_buffer(&self.shm, &self.qh, canvas.w, canvas.h, bytes) {
+            self.surface.attach(Some(&buffer), 0, 0);
+            if self.surface.version() >= 4 {
+                for r in damage {
+                    self.surface.damage_buffer(r.x, r.y, r.w, r.h);
+                }
+            } else {
+                self.surface.damage(0, 0, i32::MAX, i32::MAX);
+            }
+            self.surface.commit();
+            buffer.destroy();
+        }
+    }
+}
+
 fn make_backend(
     kind: super::BackendKind,
     conn: &Connection,
     win: &Win,
+    st: &State,
+    qh: &QueueHandle<State>,
 ) -> Option<Box<dyn crate::render::primitive::Backend>> {
-    if kind == super::BackendKind::Software {
-        eprintln!("novaui: the Wayland host presents with Vulkan only; ignoring the software backend");
-    }
     let (w, h) = win.px();
-    let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
-    let surface = win.surface.id().as_ptr() as *mut std::ffi::c_void;
-    let overlay = matches!(win.role, Role::Layer(_));
-    let attach = |v: &mut crate::render::vulkan::Vulkan| {
-        v.set_transparent(overlay);
-        v.attach(crate::render::vulkan::Window::Wayland { display, surface }, w, h)
-    };
-    match crate::render::vulkan::Vulkan::new(w, h) {
-        Ok(mut v) => match attach(&mut v) {
-            Ok(()) if overlay && !v.composes_alpha() => {
-                eprintln!("novaui: the Vulkan Wayland surface composes no alpha");
-                None
-            }
-            Ok(()) => Some(Box::new(v)),
-            Err(e) => {
-                eprintln!("novaui: Vulkan Wayland surface unavailable ({e})");
-                None
-            }
-        },
-        Err(e) => {
-            eprintln!("novaui: Vulkan unavailable ({e})");
-            None
+    if kind != super::BackendKind::Software {
+        let display = conn.backend().display_ptr() as *mut std::ffi::c_void;
+        let surface = win.surface.id().as_ptr() as *mut std::ffi::c_void;
+        let window = crate::render::vulkan::Window::Wayland { display, surface };
+        match crate::render::vulkan::Vulkan::window(window, w, h, matches!(win.role, Role::Layer(_))) {
+            Ok(v) => return Some(Box::new(v)),
+            Err(e) => eprintln!("novaui: Vulkan unavailable ({e}); software presentation"),
         }
     }
+    let mut sw = crate::render::software::Software::new(w, h);
+    sw.wayland = Some(Presenter { shm: st.shm.clone()?, surface: win.surface.clone(), qh: qh.clone() });
+    eprintln!("novaui: Wayland software (wl_shm)");
+    Some(Box::new(sw))
 }
 
 /// The Wayland window's part of the turn (`runner::Host`): its connection, surfaces, backend and
@@ -1547,7 +1562,7 @@ impl runner::Host for WlHost {
         // The surface takes one presenter at a time: the old device goes before the new one is
         // made on it (as on X11 and Win32).
         let (conn, win, backend) = (&self.conn, &self.win, self.backend);
-        runner::replace_backend(&mut self.be, || make_backend(backend, conn, win))
+        runner::replace_backend(&mut self.be, || make_backend(backend, conn, win, &self.st, &self.qh))
     }
 }
 
@@ -1679,7 +1694,7 @@ pub(super) fn run(opts: &Options, make: &mut dyn FnMut(&mut Ui) -> Box<dyn App>)
         xdg.ack_configure(s);
     }
     win.apply_scale();
-    let Some(be) = make_backend(opts.backend, &c.conn, &win) else {
+    let Some(be) = make_backend(opts.backend, &c.conn, &win, &c.st, &c.qh) else {
         return false;
     };
     let access = opts.accessibility.then(|| opts.title.clone());
@@ -1754,7 +1769,7 @@ pub(super) fn run_overlay<F: FnOnce(&mut Ui) -> Box<dyn App>>(opts: &OverlayOpti
         }
     }
     win.apply_scale();
-    let Some(be) = make_backend(opts.backend, &c.conn, &win) else {
+    let Some(be) = make_backend(opts.backend, &c.conn, &win, &c.st, &c.qh) else {
         if let Role::Layer(l) = &win.role {
             l.destroy();
         }

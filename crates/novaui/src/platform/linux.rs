@@ -468,7 +468,8 @@ pub fn prepare_env(wayland: bool) {
 /// The ICD manifests of the GPUs this machine has, joined for `VK_DRIVER_FILES`; `None` when
 /// the user chose, nothing is installed, or every installed one matches anyway.
 fn vulkan_drivers() -> Option<std::ffi::OsString> {
-    if ["VK_DRIVER_FILES", "VK_ICD_FILENAMES"].iter().any(|k| std::env::var_os(k).is_some()) {
+    // Device overrides address the loader's full enumeration, including software devices.
+    if ["VK_DRIVER_FILES", "VK_ICD_FILENAMES", "NOVAUI_VULKAN_DEVICE"].iter().any(|k| std::env::var_os(k).is_some()) {
         return None;
     }
     let vendors: Vec<String> = std::fs::read_dir("/sys/class/drm")

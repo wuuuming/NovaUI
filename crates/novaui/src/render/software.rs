@@ -26,6 +26,8 @@ pub struct Software {
     layers: HashMap<u32, Surface>,
     images: HashMap<u32, Surface>,
     atlas: Vec<u8>,
+    #[cfg(target_os = "linux")]
+    pub(crate) wayland: Option<crate::platform::wayland::Presenter>,
     #[cfg(windows)]
     pub hwnd: Option<windows::Win32::Foundation::HWND>,
 }
@@ -264,6 +266,8 @@ impl Software {
             atlas: vec![0; (crate::text::ATLAS * crate::text::ATLAS) as usize],
             #[cfg(windows)]
             hwnd: None,
+            #[cfg(target_os = "linux")]
+            wayland: None,
         }
     }
 
@@ -541,6 +545,10 @@ impl Backend for Software {
         }
     }
     fn present(&mut self, _damage: &[Rect]) {
+        #[cfg(target_os = "linux")]
+        if let Some(wl) = &self.wayland {
+            wl.present(&self.canvas, _damage);
+        }
         #[cfg(windows)]
         if let Some(hwnd) = self.hwnd {
             self.blit(hwnd, _damage);

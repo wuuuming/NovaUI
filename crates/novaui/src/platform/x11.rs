@@ -198,13 +198,9 @@ impl Backend for SoftwareX11 {
 
 fn make_backend(kind: super::BackendKind, x: &X, w: i32, h: i32) -> Box<dyn Backend> {
     if kind != super::BackendKind::Software {
-        match crate::render::vulkan::Vulkan::new(w, h) {
-            Ok(mut v) => {
-                match v.attach(crate::render::vulkan::Window::Xlib { display: x.dpy as *mut _, window: x.pres }, w, h) {
-                    Ok(()) => return Box::new(v),
-                    Err(e) => eprintln!("novaui: Vulkan surface unavailable ({e}); software fallback"),
-                }
-            }
+        let window = crate::render::vulkan::Window::Xlib { display: x.dpy as *mut _, window: x.pres };
+        match crate::render::vulkan::Vulkan::window(window, w, h, false) {
+            Ok(v) => return Box::new(v),
             Err(e) => eprintln!("novaui: Vulkan unavailable ({e}); software fallback"),
         }
     }
@@ -230,18 +226,10 @@ fn make_backend(kind: super::BackendKind, x: &X, w: i32, h: i32) -> Box<dyn Back
 /// An overlay's backend: Vulkan composing the canvas's alpha, else (no Vulkan, a surface that
 /// composes no alpha: NVIDIA's) the software canvas put on the ARGB window as it is.
 fn transparent_backend(x: &X, w: i32, h: i32) -> Result<Box<dyn Backend>, String> {
-    let vulkan = || -> Result<Box<dyn Backend>, String> {
-        let mut v = crate::render::vulkan::Vulkan::new(w, h)?;
-        v.set_transparent(true);
-        v.attach(crate::render::vulkan::Window::Xlib { display: x.dpy as *mut _, window: x.pres }, w, h)?;
-        if !v.composes_alpha() {
-            return Err("the Vulkan surface composes no alpha".into());
-        }
-        Ok(Box::new(v))
-    };
     if x.backend != super::BackendKind::Software {
-        match vulkan() {
-            Ok(be) => return Ok(be),
+        let window = crate::render::vulkan::Window::Xlib { display: x.dpy as *mut _, window: x.pres };
+        match crate::render::vulkan::Vulkan::window(window, w, h, true) {
+            Ok(v) => return Ok(Box::new(v)),
             Err(e) => eprintln!("novaui: overlay: {e}; software presentation"),
         }
     }

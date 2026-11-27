@@ -318,7 +318,7 @@ pub use win32::*;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
-mod wayland;
+pub(crate) mod wayland;
 #[cfg(target_os = "linux")]
 mod x11;
 #[cfg(target_os = "linux")]
